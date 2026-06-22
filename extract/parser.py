@@ -111,6 +111,9 @@ EMOJI_PATTERN = re.compile(
 
 
 def extract_text(message):
+    '''
+    возвращает текст или склеенный из списка текст
+    '''
     text = message.get("text", "")
 
     if isinstance(text, str):
@@ -129,6 +132,9 @@ def extract_text(message):
 
 
 def clean_feedback_text(text):
+    """
+    вычищает текст фидбэка
+    """
     text = unicodedata.normalize("NFKC", text)
     text = EMOJI_PATTERN.sub("", text)
     text = re.sub(r"[\u200b-\u200f\u202a-\u202e]", "", text)
@@ -136,16 +142,82 @@ def clean_feedback_text(text):
     return text.strip()
 
 
-def clean_cv_text(text):
+def clean_cv_text(text: str) -> str:
+    # 1. Unicode-нормализация
     text = unicodedata.normalize("NFKC", text)
-    text = re.sub(r"[\u200b-\u200f\u202a-\u202e]", "", text)
+
+    # 2. Удаляем невидимые управляющие символы
+    text = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", text)
+
+    # 3. Унифицируем переносы строк
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 4. Восстанавливаем буллеты
+    text = re.sub(r"(?<!\n)([•∗·‣▪▸\-–])\s*", r"\n\1 ", text) # \n — вставить новую строку,\1 — вернуть найденный маркер,' ' — добавить один пробел после маркера
+
+    # 5. Дата-диапазоны
+    text = re.sub(r"(\w+)\s*\n\s*(–|-|—)\s*\n?\s*(\w+)", r"\1 \2 \3", text)
+
+    # Убираем пробелы вокруг дефиса в составных словах и диапазонах
+    text = re.sub(r"\s+-\s+(?=[a-z])", "-", text)      # production - ready → production-ready
+    text = re.sub(r"\s+-\s+(?=[A-Z])", " - ", text)    # 2000 - 2006 → 2000-2006 (даты)
+    text = re.sub(r"(\d)\s+-\s+(\d)", r"\1-\2", text)  # явно для дат: 2000 - 2006 → 2000-2006
+
+    # Убираем пробел перед запятой/точкой (ещё один артефакт PDF)
+    text = re.sub(r"\s+([.,;:])", r"\1", text)          # "Python , C++" → "Python, C++"
+
+    def add_section_breaks(m):
+        if m.group(0).strip().lower() in CV_SECTION_ALIASES:
+            return f"\n\n{m.group(0)}\n"
+        return m.group(0)
+    '''
+    Этот код ищет в тексте строки, которые похожи на заголовки разделов резюме, и добавляет вокруг них пустые строки.
+    '''
+    text = re.sub(r"(?m)^([A-Z][a-zA-Z &\/]{2,30})$", add_section_breaks, text)
+
+    # 7. Схлопываем горизонтальные пробелы
     text = re.sub(r"[ \t]+", " ", text)
+
+    # 8. Не более двух переносов подряд
     text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # 9. Пробелы в начале/конце каждой строки
+    lines = [line.strip() for line in text.splitlines()]
+    text = "\n".join(lines)
+
+    # 10. ✅ Убираем маркеры списков в начале строки
+    #     • ∗ · ‣ ▪ ▸ и дефис/тире используемые как буллет
+    text = re.sub(r"(?m)^[•∗·‣▪▸]\s*", "", text)
+    text = re.sub(r"(?m)^[-–—]\s+(?=\S)", "", text)  # дефис только если за ним текст
+
+    # 11. ✅ Склеиваем буллеты блока в один абзац через пробел
+    #     Логика: строки внутри одного блока (без пустой строки между ними)
+    #     объединяются в одно предложение
+    def merge_bullet_block(block: str) -> str:
+        lines = [l.strip() for l in block.splitlines() if l.strip()]
+        if len(lines) <= 1:
+            return lines[0] if lines else ""
+
+        result = []
+        for line in lines:
+            # Добавляем точку если предложение не заканчивается пунктуацией
+            if line and line[-1] not in ".!?:,":
+                line = line + "."
+            result.append(line)
+
+        return " ".join(result)
+
+    paragraphs = text.split("\n\n")
+    paragraphs = [merge_bullet_block(p) for p in paragraphs]
+    text = "\n\n".join(paragraphs)
+
     return text.strip()
 
 
 def is_pdf_message(message):
+    '''
+    
+    '''
     file_url = message.get("file", "")
     mime_type = message.get("mime_type", "")
     file_name = message.get("file_name", "")
@@ -174,8 +246,11 @@ def extract_pdf_text(file_url):
 
 
 def normalize_heading(text):
+    '''
+    Функция приводит заголовок к нормализованному виду, чтобы его можно было надежно сравнивать с шаблонами.
+    '''
     text = unicodedata.normalize("NFKC", text)
-    text = text.lower().strip(" :-–—|•·")
+    text = text.lower().strip(" .:-–—|•·")
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -184,11 +259,16 @@ def detect_section(line):
     normalized = normalize_heading(line)
     if normalized in SECTION_BY_ALIAS:
         return SECTION_BY_ALIAS[normalized]
-
     return None
 
 
 def normalize_section_text(lines):
+    '''
+    убирает пустые строки
+    чистит пробелы
+    ограничивает “разрывы” максимум до одного пустого промежутка
+    делает текст аккуратным для эмбеддинга
+    '''
     text = "\n".join(line.strip() for line in lines if line.strip())
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -228,6 +308,7 @@ def parse_cv_pdf(file_url):
     text = clean_cv_text(raw_text)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
+
     data = {
         "role_position": "",
         "skills": "",
@@ -245,9 +326,8 @@ def parse_cv_pdf(file_url):
             continue
 
         if current_section:
-            data[current_section] = normalize_section_text(
-                [data[current_section], line]
-            )
+            title = normalize_section_text([data[current_section], line])
+            data[current_section] = re.sub(r"\s+", " ", title)
         else:
             intro_lines.append(line)
 
@@ -258,19 +338,27 @@ def parse_cv_pdf(file_url):
 
 
 def build_cases(messages):
+    """
+    сортируем сообщения по id
+    """
     messages_by_id = {message["id"]: message for message in messages if "id" in message}
 
     cases_by_id = {}
 
     for message in messages:
         if message.get("from") not in ADMINS:
+            '''
+            если сообщение не от из списка админов 
+            '''
             continue
 
         parent = messages_by_id.get(message.get("reply_to_message_id"))
+        # находим исходное сообщение на кт отреагировал админ
         if not parent or not is_pdf_message(parent):
             continue
 
         parent_id = parent["id"]
+        # добавляем данные из оригинального сообщения
         case = cases_by_id.setdefault(
             parent_id,
             {
@@ -294,6 +382,9 @@ def build_cases(messages):
 
 
 def load_messages(path=INPUT_PATH):
+    '''
+    получаем список словарей с сообщениями из result.json
+    '''
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -311,3 +402,5 @@ cases = build_cases(load_messages())
 if __name__ == "__main__":
     save_cases(cases)
     print(f"Saved {len(cases)} cases to {OUTPUT_PATH}")
+
+
