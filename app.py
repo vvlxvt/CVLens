@@ -1,7 +1,6 @@
 import json
 import os
 import certifi
-from uuid import uuid4
 from pathlib import Path
 
 from qdrant_client.models import PointStruct
@@ -10,9 +9,7 @@ from dotenv import load_dotenv
 from qdrant_client.models import Distance, VectorParams
 from sentence_transformers import SentenceTransformer
 
-# Загружает переменные из файла .env в окружение
 load_dotenv()
-
 
 # ==========================================
 # CONFIG
@@ -36,45 +33,48 @@ qdrant_verify_ssl = os.getenv("QDRANT_VERIFY_SSL", "false").lower() in (
 client = QdrantClient(
     url=qdrant_url,
     api_key=qdrant_api_key,
-    cloud_inference=True,
     check_compatibility=False,
     verify=certifi.where() if qdrant_verify_ssl else False,
+    timeout=30,
 )
 
 
-def create_collection_if_not_exists(client, collection_name):
-    collections = client.get_collections().collections
-    exists = any(c.name == collection_name for c in collections)
+def ensure_collection(client, collection_name, vector_size=768, force_recreate=False):
+    exists = any(
+        c.name == collection_name for c in client.get_collections().collections
+    )
 
-    if not exists:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=384,  # важно для e5-small
-                distance=Distance.COSINE,
-            ),
-        )
-        print(f"Collection '{collection_name}' created")
-    else:
+    if exists and not force_recreate:
         print(f"Collection '{collection_name}' already exists")
+        return
+
+    if exists:
+        client.delete_collection(collection_name)
+
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+    )
+    print(f"Collection '{collection_name}' {'recreated' if exists else 'created'}")
+
+
+# ==========================================
+# TEXT BUILDER
+# Кейс плоский: {id, role_position, skills, about_me_summary, experience, feedback}
+# ==========================================
 
 
 def build_resume_text(case: dict) -> str:
-    data = case.get("data", {})
-
-    return f"""
-                Кандидат:
-                {data.get("role_position", "")}
-
-                Навыки:
-                {data.get("skills", "")}
-
-                О себе:
-                {data.get("about_me_summary", "")}
-
-                Опыт:
-                {data.get("experience", "")}
-                                            """.strip()
+    parts = []
+    if case.get("role_position"):
+        parts.append(f"Кандидат:\n{case['role_position']}")
+    if case.get("skills"):
+        parts.append(f"Навыки:\n{case['skills']}")
+    if case.get("about_me_summary"):
+        parts.append(f"О себе:\n{case['about_me_summary']}")
+    if case.get("experience"):
+        parts.append(f"Опыт:\n{case['experience']}")
+    return "\n\n".join(parts).strip()
 
 
 # ==========================================
@@ -96,27 +96,62 @@ def load_cases_to_qdrant(
         if len(resume_text.strip()) < 100:
             continue
 
-        vector = embedding_model.encode(resume_text, normalize_embeddings=True).tolist()
+        # vector = embedding_model.encode(resume_text, normalize_embeddings=True).tolist()
+        vector = embedding_model.encode(
+            "passage: " + resume_text,
+            normalize_embeddings=True,
+        ).tolist()
 
         payload = {
             "case_id": case.get("id"),
-            "candidate": case.get("data", {}).get("role_position"),
-            "skills": case.get("data", {}).get("skills"),
-            "summary": case.get("data", {}).get("about_me_summary"),
+            "role": case.get("role_position", ""),
+            "skills": case.get("skills", ""),
+            "summary": case.get("about_me_summary", ""),
             "resume": resume_text,
             "feedback": case.get("feedback", ""),
         }
 
-        points.append(PointStruct(id=str(uuid4()), vector=vector, payload=payload))
+        points.append(
+            PointStruct(
+                id=case.get("id"),  # int, уникален — upsert перезапишет, не дублирует
+                vector=vector,
+                payload=payload,
+            )
+        )
 
     client.upsert(collection_name=collection_name, points=points)
-
     print(f"Загружено {len(points)} кейсов")
 
 
-model = SentenceTransformer("intfloat/multilingual-e5-small")
+# ==========================================
+# SEARCH
+# ==========================================
 
-create_collection_if_not_exists(client, "cv_reviews")
+
+def search_similar_cv(client, collection_name, embedding_model, resume_text, limit=3):
+    # query_vector = embedding_model.encode(
+    #     resume_text, normalize_embeddings=True
+    # ).tolist()
+    query_vector = embedding_model.encode(
+        "query: " + resume_text,
+        normalize_embeddings=True,
+    ).tolist()
+    return client.query_points(
+        collection_name=collection_name,
+        query=query_vector,
+        limit=limit,
+    ).points
+
+
+# ==========================================
+# MAIN
+# ==========================================
+
+# model = SentenceTransformer("intfloat/multilingual-e5-small")
+model = SentenceTransformer("intfloat/multilingual-e5-base")
+
+# ensure_collection(client, "cv_reviews")
+ensure_collection(client, "cv_reviews", force_recreate=True)
 
 load_cases_to_qdrant(
     client=client,
@@ -126,42 +161,28 @@ load_cases_to_qdrant(
 )
 
 # ==========================================
-# SEARCH
+# ПРИМЕР ПОИСКА
 # ==========================================
 
-
-def search_similar_cv(client, collection_name, embedding_model, resume_text, limit=10):
-    query_vector = embedding_model.encode(
-        resume_text, normalize_embeddings=True
-    ).tolist()
-
-    return client.query_points(
-        collection_name=collection_name, query=query_vector, limit=limit
-    ).points
-
-
 CV = {
-    "id": 136854,
-    "data": {
-      "role_position": "",
-      "skills": "Programming Languages: Java 17+, Python, SQL Backend: Spring Boot, Spring Security, Spring Data JPA, Hibernate, REST APIs Databases: PostgreSQL, MySQL, H2 Infrastructure & Tools: Docker, Docker Compose, Git, Linux (basic), Maven, Postman, IntelliJ IDEA Caching & Messaging: Redis, Kafka (basic), Hazelcast (basic) Testing: JUnit, Mockito, Testcontainers (basic) Languages: English — B2, Czech — B2, Russian — Native",
-      "about_me_summary": "Backend-oriented Software Engineer focused on microservices, integrations, and REST API development. Background includes commercial Java backend experience (REST APIs, PostgreSQL performance tuning) and a final-year BSc in Enterprise Systems at CTU/ČVUT FEL. Built a Docker Compose–based Mars data platform with Spring Boot microservices and ETL pipelines, storing metadata in PostgreSQL and assets in S3-compatible MinIO, with semantic search (Qdrant) and optional LLM-generated descriptions. Based in Prague (CZ), free access to the labor market (student); open to full-time or part-time, and B2B via IČO if required (can be arranged).",
-      "experience": "Software Engineer August 2020 – September 2021 Step Logic Moscow, Russia Tech stack: Java, Spring Boot, PostgreSQL, JUnit 5, Mockito, Git, Jira • Contributed to the backend of internal employee-facing tools, implementing REST endpoints and improving stability of common workflows • Optimized performance-critical SQL queries by restructuring joins and implementing indexes, resulting in 10-20% faster execution times for key endpoints (measured via EXPLAIN ANALYZE on staging) • Assisted with endpoint access configuration (role/permission mapping) and resolved recurring authorization issues (e.g., 401/403) based on log analysis • Refactored parts of the service layer to improve structure, reduce duplicated logic, and simplify maintenance • Added unit tests with JUnit and Mockito to modules lacking automated coverage • Worked in a Scrum team using Jira: sprint planning, daily stand-ups, code reviews, and documentation updates Projects Mars Data Analysis Platform Sep 2025 – Present Tech stack: Java, Spring Boot, PostgreSQL, MinIO, Qdrant, LangChain, OpenAI API, Next.js, Docker Developed a data processing and retrieval platform based on NASA Mars mission image archives, including backend services, ETL workflows, structured storage, and similarity search functionality • Designed and implemented a Spring Boot backend service for ingesting, processing, and serving structured metadata derived from public NASA datasets • Built a modular ETL pipeline that downloads and processes dozens of separate datasets and tens of thousands of Mars images, with filtering by mission, instrument, and spacecraft, persisting metadata in PostgreSQL and storing image objects in MinIO • Implemented a basic vector-search mechanism using Qdrant to enable similarity-based retrieval of related images • Integrated a lightweight LLM component (LangChain + OpenAI API) to generate short descriptive summaries for selected Mars images • Developed a simple Next.js interface for browsing processed data, viewing metadata, and previewing images • Containerized the entire system using Docker Compose to ensure reproducible multi-service development and straightforward deployment Education Czech Technical University in Prague (CTU) Prague, Czech Republic Bachelor of Science: Software Engineering and Technology Aug. 2022 – May 2026"
-    },
-    "feedback": "А вы где находитесь?"
-  }
+    "id": 136017,
+    "role_position": "",
+    "skills": "Languages: Python (proficient), Bash, C/C++, SQL. Containerization & orchestration: Docker, Kubernetes, Helm. CI/CD: Ansible, Jenkins, GitLab CI/CD, AWX, Argo. Data & observability: Postgres, Kafka, ELK, Prometheus. Python: flask, django, pandas, openpyxl, aiohttp, pytest.",
+    "about_me_summary": "",
+    "experience": "Implementation/DevOps Engineer March 2024 – Present. SberTech Moscow, Russia. Managed Istio service mesh configurations for client and platform environments in Kubernetes. Infrastructure Engineer Jan. 2020 – Oct 2023. Yandex Moscow, Russia. Developed a tool to interact with internal monitoring systems, adopted by 10+ teams.",
+    "feedback": "",
+}
 
 results = search_similar_cv(
     client,
     collection_name="cv_reviews",
     embedding_model=model,
-    resume_text=build_resume_text({"data": CV}),
+    resume_text=build_resume_text(CV),
     limit=10,
 )
-
 
 for r in results:
     print("\n---")
     print("score:", r.score)
-    print(r.payload["candidate"])
+    print(r.payload["role"])
     print(r.payload["skills"])
