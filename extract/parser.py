@@ -3,6 +3,9 @@ import re
 import unicodedata
 from pathlib import Path
 
+
+from response import extract_intro_data, MODEL
+
 try:
     import fitz
 except ImportError as exc:
@@ -19,18 +22,24 @@ ADMINS = {
     "Anna [job offer USA \U0001f1fa\U0001f1f8] Naumova",
 }
 
+
 CV_SECTION_ALIASES: dict[str, set[str]] = {
-    "role_position": {
-        "role",
-        "position",
-        "job title",
-        "desired position",
-        "title",
-        "\u0440\u043e\u043b\u044c",
-        "\u043f\u043e\u0437\u0438\u0446\u0438\u044f",
-        "\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u044c",
-        "\u0436\u0435\u043b\u0430\u0435\u043c\u0430\u044f \u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u044c",
-        "\u0441\u043f\u0435\u0446\u0438\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u044f",
+    "about_me_summary": {
+        "about",
+        "about me",
+        "additional information",
+        "summary",
+        "profile",
+        "professional summary",
+        "objective",
+    },
+    "experience": {
+        "experience",
+        "work experience",
+        "professional experience",
+        "employment",
+        "employment history",
+        "career history",
     },
     "skills": {
         "skills",
@@ -40,38 +49,6 @@ CV_SECTION_ALIASES: dict[str, set[str]] = {
         "technology stack",
         "tech stack",
         "stack",
-        "\u043d\u0430\u0432\u044b\u043a\u0438",
-        "\u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u043d\u0430\u0432\u044b\u043a\u0438",
-        "\u043a\u043b\u044e\u0447\u0435\u0432\u044b\u0435 \u043d\u0430\u0432\u044b\u043a\u0438",
-        "\u0441\u0442\u0435\u043a",
-        "\u0442\u0435\u0445\u043d\u043e\u043b\u043e\u0433\u0438\u0438",
-    },
-    "about_me_summary": {
-        "about",
-        "about me",
-        "additional information",
-        "summary",
-        "profile",
-        "professional summary",
-        "objective",
-        "\u043e \u0441\u0435\u0431\u0435",
-        "\u043e\u0431\u043e \u043c\u043d\u0435",
-        "\u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0430\u044f \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u044f",
-        "\u043f\u0440\u043e\u0444\u0438\u043b\u044c",
-        "\u0440\u0435\u0437\u044e\u043c\u0435",
-        "\u043a\u0440\u0430\u0442\u043a\u043e",
-    },
-    "experience": {
-        "experience",
-        "work experience",
-        "professional experience",
-        "employment",
-        "employment history",
-        "career history",
-        "\u043e\u043f\u044b\u0442",
-        "\u043e\u043f\u044b\u0442 \u0440\u0430\u0431\u043e\u0442\u044b",
-        "\u043f\u0440\u043e\u0444\u0435\u0441\u0441\u0438\u043e\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u043e\u043f\u044b\u0442",
-        "\u043a\u0430\u0440\u044c\u0435\u0440\u0430",
     },
 }
 
@@ -84,14 +61,9 @@ IGNORED_SECTIONS: set[str] = {
     "leadership",
     "projects",
     "volunteering",
-    "\u0434\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f",
-    "\u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u043d\u0438\u0435",
-    "\u043f\u0440\u043e\u0435\u043a\u0442\u044b",
-    "\u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u044b",
-    "\u044f\u0437\u044b\u043a\u0438",
 }
 
-SECTION_BY_ALIAS: dict[str, str] = {
+SECTION_BY_ALIAS: dict[str, str] = {  # получаем обратный индекс
     alias: section
     for section, aliases in CV_SECTION_ALIASES.items()
     for alias in aliases
@@ -176,42 +148,53 @@ def clean_feedback_text(text: str) -> str:
 
 
 def clean_cv_text(text: str) -> str:
-    """Нормализует сырой текст PDF-резюме."""
+    """
+    Нормализует сырой текст PDF-резюме.
+
+    Выход: блоки разделённые \n\n, где каждый блок начинается с заголовка
+    (или является преамбулой). Внутри блока строки разделены \n.
+
+    Структура выхода:
+        <преамбула — имя, роль, контакты, summary>
+        \n\n
+        <Заголовок1>
+        строка
+        строка
+        \n\n
+        <Заголовок2>
+        строка
+        ...
+    """
+    # --- Нормализация unicode ---
     text = unicodedata.normalize("NFKC", text)
     text = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # Восстанавливаем буллеты
-    text = re.sub(
-        r"(?<!\n)([\u2022\u2217\u00b7\u2023\u25aa\u25b8\-\u2013])\s*", r"\n\1 ", text
-    )
-
-    # Дата-диапазоны на разных строках
+    # --- Дата-диапазоны склеенные переносами ---
     text = re.sub(r"(\w+)\s*\n\s*([\u2013\-\u2014])\s*\n?\s*(\w+)", r"\1 \2 \3", text)
 
-    # Пробелы вокруг дефиса
+    # --- Пробелы вокруг дефиса ---
     text = re.sub(r"\s+-\s+(?=[a-z])", "-", text)
     text = re.sub(r"\s+-\s+(?=[A-Z])", " - ", text)
     text = re.sub(r"(\d)\s+-\s+(\d)", r"\1-\2", text)
 
-    # Пробел перед пунктуацией
+    # --- Пробел перед пунктуацией ---
     text = re.sub(r"\s+([.,;:])", r"\1", text)
 
-    # Горизонтальные пробелы
+    # --- Горизонтальные пробелы ---
     text = re.sub(r"[ \t]+", " ", text)
 
-    # Не более двух переносов
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    # --- Пробелы по краям строк ---
+    text = "\n".join(line.strip() for line in text.splitlines())
 
-    # Пробелы по краям строк
-    lines = [line.strip() for line in text.splitlines()]
-    text = "\n".join(lines)
-
-    # Убираем маркеры буллетов в начале строки
+    # --- Убираем маркеры буллетов в начале строки ---
     text = re.sub(r"(?m)^[\u2022\u2217\u00b7\u2023\u25aa\u25b8]\s*", "", text)
     text = re.sub(r"(?m)^[-\u2013\u2014]\s+(?=\S)", "", text)
 
-    # Все известные заголовки секций
+    # --- Убираем пустые строки ---
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+
+    # --- Разбиваем на блоки по заголовкам ---
     _all_headings: set[str] = set(SECTION_BY_ALIAS) | IGNORED_SECTIONS
 
     def _is_heading(line: str) -> bool:
@@ -223,40 +206,21 @@ def clean_cv_text(text: str) -> str:
         normalized = re.sub(r"\s+", " ", normalized)
         return normalized in _all_headings
 
-    def split_on_headings(block: str) -> list[str]:
-        """Если внутри абзаца встречается заголовок — разрезаем на подблоки."""
-        lines = block.splitlines()
-        sub: list[str] = []
-        result: list[str] = []
-        for ln in lines:
-            if _is_heading(ln) and sub:
-                result.append("\n".join(sub))
-                sub = [ln]
-            else:
-                sub.append(ln)
-        if sub:
-            result.append("\n".join(sub))
-        return result
+    blocks: list[list[str]] = []
+    current: list[str] = []
 
-    def merge_block(block: str) -> str:
-        blines = [ln.strip() for ln in block.splitlines() if ln.strip()]
-        if len(blines) <= 1:
-            return blines[0] if blines else ""
-        result = []
-        for ln in blines:
-            if ln and ln[-1] not in ".!?:,":
-                ln += "."
-            result.append(ln)
-        return " ".join(result)
+    for ln in lines:
+        if _is_heading(ln):
+            if current:
+                blocks.append(current)
+            current = [ln]  # заголовок начинает новый блок
+        else:
+            current.append(ln)
 
-    # Сначала защищаем заголовки, потом склеиваем блоки
-    raw_paragraphs = text.split("\n\n")
-    protected: list[str] = []
-    for p in raw_paragraphs:
-        protected.extend(split_on_headings(p))
+    if current:
+        blocks.append(current)
 
-    paragraphs = [merge_block(p) for p in protected]
-    return "\n\n".join(paragraphs).strip()
+    return "\n\n".join("\n".join(block) for block in blocks).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +234,16 @@ def is_pdf_message(message: dict) -> bool:
         or str(message.get("file", "")).lower().endswith(".pdf")
         or str(message.get("file_name", "")).lower().endswith(".pdf")
     )
+
+
+def english_ratio(text: str) -> float:
+    letters = re.findall(r"[A-Za-zА-Яа-яЁё]", text)
+
+    if not letters:
+        return 0
+
+    english = sum(ch.isascii() for ch in letters)
+    return english / len(letters)
 
 
 def extract_pdf_text(file_url: str, data_dir: Path = DATA_DIR) -> str:
@@ -304,137 +278,51 @@ def detect_section(line: str) -> str | None:
     return None
 
 
-def is_contact_line(line: str) -> bool:
-    return any(re.search(p, line, re.IGNORECASE) for p in CONTACT_PATTERNS)
-
-
-def is_name_line(line: str) -> bool:
-    """Эвристика для ФИО: 2–4 слова, все с заглавной, нет цифр."""
-    words = line.split()
-    if not (2 <= len(words) <= 4):
-        return False
-    if re.search(r"[0-9@/\\|]", line):
-        return False
-    return all(w[0].isupper() for w in words if w)
-
-
-def extract_intro_summary(intro_lines: list[str]) -> tuple[str, str]:
-    """
-    Из преамбулы (до первой именованной секции) извлекает:
-      - role_position: первая короткая строка после ФИО/контактов
-      - about_me_summary: блок связного текста (без заголовка)
-    """
-    role = ""
-    summary_parts: list[str] = []
-    past_header = False
-
-    for line in intro_lines:
-        line = line.strip(" |")
-        if not line:
-            continue
-
-        if is_contact_line(line):
-            past_header = True
-            continue
-
-        if is_name_line(line) and not past_header:
-            past_header = True
-            continue
-
-        past_header = True
-
-        # Короткая строка без конечного знака препинания → роль
-        if not role and len(line) <= 90 and not re.search(r"[.!?]$", line):
-            role = line
-            continue
-
-        # Длинная строка или заканчивается точкой → саммари
-        if len(line) > 40 or re.search(r"[.!?]$", line):
-            summary_parts.append(line)
-
-    return role, " ".join(summary_parts).strip()
-
-
-def looks_like_company_line(line: str) -> bool:
-    """
-    True если строка — заголовок позиции/компании или строка с датой,
-    которую нужно убрать из блока experience.
-    """
-    if len(line) > 120:
-        return False
-    has_date = bool(DATE_RANGE_RE.search(line) or SHORT_DATE_RE.search(line))
-    if has_date:
-        return True
-    # Короткая строка с заглавной, без точки, без глаголов → заголовок
-    if len(line) <= 60 and not line.endswith(".") and line[:1].isupper():
-        verb_re = re.compile(
-            r"\b(разработ|внедр|реализ|созда|оптимиз|вел|участв"
-            r"|participated|developed|built|led|managed|designed"
-            r"|implemented|improved|created|maintained|delivered"
-            r"|established|launched|reduced|increased)\b",
-            re.IGNORECASE,
-        )
-        if not verb_re.search(line):
-            return True
-    return False
-
-
-def strip_company_dates(experience_text: str) -> str:
-    """Убирает строки с компаниями/датами, оставляет описания."""
-    if not experience_text:
-        return ""
-    lines = [ln.strip() for ln in experience_text.splitlines() if ln.strip()]
-    kept = [ln for ln in lines if not looks_like_company_line(ln)]
-    return " ".join(kept).strip()
-
-
 def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
     """
     Разбирает PDF на секции. Возвращает:
-        role_position, skills, about_me_summary, experience
-    Из experience убраны строки компаний и дат.
+        skills, experience, about_me_summary
     """
     raw_text = extract_pdf_text(file_url, data_dir)
     if not raw_text:
-        return {
-            k: "" for k in ("role_position", "skills", "about_me_summary", "experience")
-        }
+        return {k: "" for k in ("experience", "skills", "about_me_summary")}
 
     text = clean_cv_text(raw_text)
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if english_ratio(text[:300]) < 0.9:
+        return {"noeng": 1}
 
     buckets: dict[str, list[str]] = {
-        k: [] for k in ("role_position", "skills", "about_me_summary", "experience")
+        k: [] for k in ("experience", "skills", "about_me_summary")
     }
-    current_section: str | None = None
     intro_lines: list[str] = []
 
-    for line in lines:
-        detected = detect_section(line)
+    for block in text.split("\n\n"):
+        lines = [ln for ln in block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+
+        detected = detect_section(
+            lines[0]
+        )  # первая строка блока — заголовок или преамбула
 
         if detected == "__ignored__":
-            current_section = "__ignored__"
             continue
 
-        if detected:
-            current_section = detected
+        if detected and detected in buckets:
+            buckets[detected].extend(lines[1:])  # заголовок не включаем в контент
             continue
 
-        if current_section and current_section in buckets:
-            buckets[current_section].append(line)
-        elif current_section is None:
-            intro_lines.append(line)
-        # else: __ignored__ section — пропускаем
+        if detected is None and not intro_lines:
+            intro_lines = lines  # первый блок без заголовка — преамбула
 
-    result = {key: " ".join(val) for key, val in buckets.items()}
-    result["experience"] = strip_company_dates(result["experience"])
+    result = {key: "\n".join(val) for key, val in buckets.items()}
 
-    # Из преамбулы берём роль и саммари, если не нашли в явных секциях
-    intro_role, intro_summary = extract_intro_summary(intro_lines)
-    if not result["role_position"]:
-        result["role_position"] = intro_role
-    if not result["about_me_summary"] and intro_summary:
-        result["about_me_summary"] = intro_summary
+    summary = result["about_me_summary"]
+    intro_text = "\n".join(intro_lines) + '\n' + summary
+    fields = extract_intro_data(intro_text)
+    result["role_position"] = fields["role_position"]
+    if not result["about_me_summary"]:
+        result["about_me_summary"] = fields["summary"]
 
     return result
 
@@ -472,6 +360,8 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
         pid = parent["id"]
         if pid not in raw:
             sections = parse_cv_sections(parent.get("file", ""), data_dir)
+            if sections.get("noeng"):
+                continue
             raw[pid] = {"id": pid, **sections, "_feedback_parts": []}
 
         fb = clean_feedback_text(extract_message_text(msg))
@@ -483,7 +373,7 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
         entry["feedback"] = "\n\n".join(entry.pop("_feedback_parts"))
         cases.append(entry)
 
-    return cases
+    return cases[:5]
 
 
 # ---------------------------------------------------------------------------
