@@ -391,8 +391,9 @@ def save_cases(cases: list[dict], path: Path = OUTPUT_PATH) -> None:
         json.dump(cases, f, ensure_ascii=False, indent=2)
 
 
-cases = build_cases(load_messages())
+
 
 if __name__ == "__main__":
+    cases = build_cases(load_messages())
     save_cases(cases)
     print(f"Saved {len(cases)} cases to {OUTPUT_PATH}")
