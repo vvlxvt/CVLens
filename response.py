@@ -22,7 +22,7 @@ OLLAMA_MODEL = "llama3.2:3b"
 
 
 def generate_response(prompt: str, json_mode: bool = False, system: str | None = None):
-    
+
     default_system = (
         "You are a strict information extraction engine. "
         "You ALWAYS return ONLY valid JSON. No markdown. No text."
@@ -101,8 +101,10 @@ EXAMPLE OUTPUT:
 CV HEADER:
 {intro_text}"""
 
+
 def build_intro_prompt(intro_text: str) -> tuple[str, str]:
     return SYSTEM, USER_TEMPLATE.format(intro_text=intro_text)
+
 
 def extract_intro_data(intro_lines: str) -> dict:
     print("=== INTRO TEXT ===")
