@@ -147,7 +147,9 @@ def encode_weighted_resume(
             normalize_embeddings=True,
         )
         contribution = vec * weight
-        weighted_sum = contribution if weighted_sum is None else weighted_sum + contribution
+        weighted_sum = (
+            contribution if weighted_sum is None else weighted_sum + contribution
+        )
 
     if weighted_sum is None:
         return embedding_model.encode(f"{prefix}: ", normalize_embeddings=True).tolist()
@@ -184,6 +186,7 @@ def load_cases_to_qdrant(
             "role": case.get("role_position", ""),
             "skills": case.get("skills", ""),
             "summary": case.get("about_me_summary", ""),
+            "experience": case.get("experience", ""),
             "resume": resume_text,
             "feedback": case.get("feedback", ""),
         }
@@ -226,6 +229,7 @@ def print_search_results(results) -> None:
         print("score:", round(r.score, 4))
         print("role:", r.payload.get("role") or "—")
         print("skills:", (r.payload.get("skills") or "—")[:200])
+        print("experience:", (r.payload.get("experience") or "—")[:200])
         feedback = r.payload.get("feedback") or ""
         if feedback:
             print("feedback:", feedback[:500] + ("..." if len(feedback) > 500 else ""))

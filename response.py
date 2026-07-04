@@ -6,6 +6,7 @@ import os
 
 
 from pathlib import Path
+
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = ROOT_DIR / "extract" / "data"
 
@@ -107,9 +108,6 @@ CV HEADER:
 {intro_text}"""
 
 
-
-
-
 def build_intro_prompt(intro_text: str) -> tuple[str, str]:
     return SYSTEM, USER_TEMPLATE.format(intro_text=intro_text)
 
@@ -142,15 +140,13 @@ RULES:
   or is just a link/video recommendation with no direct CV critique → null
 - feedback_sections: a JSON array of CV sections the feedback gives critique/advice about.
   Allowed values ONLY:
-    "experience"   - work history, bullet points, achievements, metrics, wording of duties
-    "skills"       - tech stack / skills list, outdated or irrelevant technologies
-    "summary"      - the "about me" / professional summary section
-    "role_position" - job title / desired position framing
-    "formatting"   - layout, length, links, contact info, structure, visual presentation
-    "general"      - feedback about the CV as a whole or career advice not tied to one section
-  Pick only sections that are clearly and specifically addressed. If the feedback is a
-  question, an off-topic remark, or gives no concrete CV critique → null (not an empty array,
-  not ["general"])
+    "experience"        - work history, bullet points, achievements, metrics, wording of duties
+    "skills"             - tech stack / skills list, outdated or irrelevant technologies
+    "about_me_summary"   - the "about me" / professional summary section
+    "role_position"      - job title / desired position framing
+    "formatting"          - layout, length, links, contact info, structure, visual presentation
+  If the feedback is about the CV as a whole (general career advice) or gives no concrete
+  CV critique (a question, off-topic remark, link) → null (not an empty array)
 - Use JSON null (not the string "null") for missing/unclear values
 - Output ONLY these two keys, nothing else
 
@@ -192,21 +188,41 @@ def build_feedback_prompt(feedback_text: str) -> tuple[str, str]:
     return FEEDBACK_SYSTEM, FEEDBACK_USER_TEMPLATE.format(feedback_text=feedback_text)
 
 
+ALLOWED_SECTIONS = (
+    "role_position",
+    "skills",
+    "about_me_summary",
+    "experience",
+    "formatting",
+)
+
+
 def extract_feedback_data(feedback_text: str) -> dict:
     print("=== FEEDBACK TEXT ===")
     print(repr(feedback_text))
     print("=====================")
     system, user = build_feedback_prompt(feedback_text)
-    return generate_response(user, json_mode=True, system=system)
+    result = generate_response(user, json_mode=True, system=system)
 
+    sections = result.get("feedback_sections")
 
+    if sections:
+        # keep only allowed values, drop anything the model hallucinated
+        filtered = [s for s in sections if s in ALLOWED_SECTIONS]
+        result["feedback_sections"] = filtered or None
+    else:
+        result["feedback_sections"] = None
+
+    return result
 
 
 if __name__ == "__main__":
     import json as _json
-    with open(DATA_DIR / 'cases.json', encoding="utf-8") as f:
+
+    with open(DATA_DIR / "cases.json", encoding="utf-8") as f:
         cases = _json.load(f)
 
     for case in cases:
         result = extract_feedback_data(case["feedback"])
+
         print(case["id"], "->", result)
