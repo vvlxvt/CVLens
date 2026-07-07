@@ -1,0 +1,125 @@
+from typing import Optional
+
+from db.connection import get_session
+from db.models import Resume
+
+ALLOWED_SECTIONS = ("role_position", "skills", "about_me_summary", "experience", "formatting")
+
+
+def _clean_sections(sections: Optional[list]) -> Optional[list]:
+    if not sections:
+        return None
+    filtered = [s for s in sections if s in ALLOWED_SECTIONS]
+    return filtered or None
+
+
+def create(data: dict) -> int:
+    """Insert a new resume row. Returns the new row's id."""
+    data = dict(data)
+    data["feedback_sections"] = _clean_sections(data.get("feedback_sections"))
+
+    with get_session() as session:
+        resume = Resume(**data)
+        session.add(resume)
+        session.flush()  # populates resume.id before commit
+        return resume.id
+
+
+def get_by_resume_id(resume_id: str) -> Optional[Resume]:
+    with get_session() as session:
+        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
+        if resume:
+            session.expunge(resume)  # detach so it's usable after session closes
+        return resume
+
+
+def update_feedback(
+    resume_id: str,
+    feedback_summary: str,
+    feedback_sections: Optional[list],
+    llm: str,
+    prompt_id: int,
+) -> bool:
+    """Returns True if a row was updated, False if resume_id not found."""
+    with get_session() as session:
+        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
+        if not resume:
+            return False
+        resume.feedback_summary = feedback_summary
+        resume.feedback_sections = _clean_sections(feedback_sections)
+        resume.feedback_llm = llm
+        resume.feedback_prompt_id = prompt_id
+        return True
+
+
+def update_about(
+    resume_id: str,
+    full_name: Optional[str],
+    role_position: Optional[str],
+    about_summary: Optional[str],
+    llm: str,
+    prompt_id: int,
+) -> bool:
+    with get_session() as session:
+        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
+        if not resume:
+            return False
+        resume.full_name = full_name
+        resume.role_position = role_position
+        resume.about_summary = about_summary
+        resume.about_llm = llm
+        resume.about_prompt_id = prompt_id
+        return True
+
+
+def get_stale_feedback(current_llm: str, current_prompt_id: int) -> list[Resume]:
+    """Resumes whose feedback extraction used a different model or prompt version."""
+    with get_session() as session:
+        rows = (
+            session.query(Resume)
+            .filter(
+                (Resume.feedback_llm != current_llm)
+                | (Resume.feedback_prompt_id != current_prompt_id)
+            )
+            .all()
+        )
+        session.expunge_all()
+        return rows
+
+
+def get_stale_about(current_llm: str, current_prompt_id: int) -> list[Resume]:
+    """Resumes whose intro/about extraction used a different model or prompt version."""
+    with get_session() as session:
+        rows = (
+            session.query(Resume)
+            .filter(
+                (Resume.about_llm != current_llm)
+                | (Resume.about_prompt_id != current_prompt_id)
+            )
+            .all()
+        )
+        session.expunge_all()
+        return rows
+
+
+def list_by_feedback_section(section: str) -> list[Resume]:
+    """Resumes where feedback_sections (JSON array) contains the given section."""
+    with get_session() as session:
+        # SQLite JSON column comes back as a Python list, so filter in Python
+        # after a coarse SQL LIKE prefilter (avoids loading rows with no JSON at all).
+        rows = (
+            session.query(Resume)
+            .filter(Resume.feedback_sections.isnot(None))
+            .all()
+        )
+        session.expunge_all()
+        return [r for r in rows if r.feedback_sections and section in r.feedback_sections]
+
+
+def delete(resume_id: str) -> bool:
+    with get_session() as session:
+        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
+        if not resume:
+            return False
+        session.delete(resume)
+        return True
