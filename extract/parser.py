@@ -3,8 +3,20 @@ import re
 import unicodedata
 from pathlib import Path
 
+from response import (
+    extract_intro_data,
+    extract_feedback_data,
+    LLM_PROVIDER,
+    MODEL,
+    OLLAMA_MODEL,
+    SYSTEM as INTRO_SYSTEM_PROMPT,
+    USER_TEMPLATE as INTRO_USER_TEMPLATE,
+    FEEDBACK_SYSTEM,
+    FEEDBACK_USER_TEMPLATE,
+)
 
-from response import extract_intro_data, MODEL
+# from db.connection import init_db
+from db import prompts_repo, resumes_repo
 
 try:
     import fitz
@@ -14,10 +26,21 @@ except ImportError as exc:
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 INPUT_PATH = DATA_DIR / "result.json"
-OUTPUT_PATH = DATA_DIR / "cases.json"
+
+# Bump these when INTRO_SYSTEM_PROMPT/INTRO_USER_TEMPLATE or
+# FEEDBACK_SYSTEM/FEEDBACK_USER_TEMPLATE change in a way that should
+# invalidate previously-extracted rows (so get_stale_* picks them up).
+INTRO_PROMPT_VERSION = "v1"
+FEEDBACK_PROMPT_VERSION = "v1"
+
+# Model actually applied by generate_response() for the current LLM_PROVIDER.
+APPLIED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
 
 ADMINS = {
     "Aleksandr Valuev",
+    "Maksim Pozharskiy",
+    "Evgeny V",
+    "Polina (Полина🪷) Kornilova",
     "Artem K",
     "Anna [job offer USA \U0001f1fa\U0001f1f8] Naumova",
 }
@@ -280,16 +303,29 @@ def detect_section(line: str) -> str | None:
 
 def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
     """
-    Разбирает PDF на секции. Возвращает:
-        skills, experience, about_me_summary
+    Разбирает PDF на секции. Возвращает поля, готовые лечь в таблицу resumes:
+        experience, skills, about_me_summary_raw,
+        full_name, role_position, about_summary,
+        about_llm, about_prompt_id
     """
+    empty = {
+        "experience": "",
+        "skills": "",
+        "about_me_summary_raw": "",
+        "full_name": None,
+        "role_position": None,
+        "about_summary": None,
+        "about_llm": None,
+        "about_prompt_id": None,
+    }
+
     raw_text = extract_pdf_text(file_url, data_dir)
     if not raw_text:
-        return {k: "" for k in ("experience", "skills", "about_me_summary")}
+        return empty
 
     text = clean_cv_text(raw_text)
     if english_ratio(text[:300]) < 0.9:
-        return {"noeng": 1}
+        return {**empty, "noeng": 1}
 
     buckets: dict[str, list[str]] = {
         k: [] for k in ("experience", "skills", "about_me_summary")
@@ -315,16 +351,29 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
         if detected is None and not intro_lines:
             intro_lines = lines  # первый блок без заголовка — преамбула
 
-    result = {key: "\n".join(val) for key, val in buckets.items()}
+    parsed = {key: "\n".join(val) for key, val in buckets.items()}
+    about_me_summary_raw = parsed.pop("about_me_summary")
 
-    summary = result["about_me_summary"]
-    intro_text = "\n".join(intro_lines) + '\n' + summary
-    fields = extract_intro_data(intro_text)
-    result["role_position"] = fields["role_position"]
-    if not result["about_me_summary"]:
-        result["about_me_summary"] = fields["summary"]
+    intro_text = "\n".join(intro_lines) + "\n" + about_me_summary_raw
+    about_prompt_id = prompts_repo.get_or_create(
+        name="intro_extraction",
+        version=INTRO_PROMPT_VERSION,
+        system_text=INTRO_SYSTEM_PROMPT,
+        user_template=INTRO_USER_TEMPLATE,
+    )
+    fields = extract_intro_data(intro_text)  # {full_name, role_position, summary}
 
-    return result
+    return {
+        **parsed,
+        "about_me_summary_raw": about_me_summary_raw,
+        "full_name": fields.get("full_name"),
+        "role_position": fields.get("role_position"),
+        # если в CV уже была явная секция about/summary — оставляем её как есть,
+        # LLM-саммари используем только как запасной вариант
+        "about_summary": about_me_summary_raw or fields.get("summary"),
+        "about_llm": APPLIED_MODEL,
+        "about_prompt_id": about_prompt_id,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -334,15 +383,10 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
 
 def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
     """
-    Строит кейсы: одно CV + склеенный фидбэк от одного или нескольких админов.
+    Строит кейсы: одно CV + склеенный фидбэк от одного или нескольких админов,
+    прогоняет фидбэк через LLM-экстракцию (feedback_summary/feedback_sections).
 
-    Структура кейса:
-        id              — id сообщения с CV в Telegram
-        role_position   — желаемая роль/позиция
-        skills          — технические навыки (строка)
-        about_me_summary — саммари «о себе» (с заголовком или из преамбулы)
-        experience      — опыт без компаний и дат
-        feedback        — ответы всех админов, склеенные через двойной перенос
+    Структура кейса соответствует колонкам таблицы resumes.
     """
     msgs_by_id: dict[int, dict] = {m["id"]: m for m in messages if "id" in m}
     raw: dict[int, dict] = {}
@@ -362,18 +406,40 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
             sections = parse_cv_sections(parent.get("file", ""), data_dir)
             if sections.get("noeng"):
                 continue
-            raw[pid] = {"id": pid, **sections, "_feedback_parts": []}
+            raw[pid] = {"resume_id": str(pid), **sections, "_feedback_parts": []}
 
         fb = clean_feedback_text(extract_message_text(msg))
         if fb:
             raw[pid]["_feedback_parts"].append(fb)
 
+    feedback_prompt_id = prompts_repo.get_or_create(
+        name="feedback_extraction",
+        version=FEEDBACK_PROMPT_VERSION,
+        system_text=FEEDBACK_SYSTEM,
+        user_template=FEEDBACK_USER_TEMPLATE,
+    )
+
     cases = []
     for entry in raw.values():
-        entry["feedback"] = "\n\n".join(entry.pop("_feedback_parts"))
+        feedback_raw = "\n\n".join(entry.pop("_feedback_parts"))
+        entry["feedback_raw"] = feedback_raw
+
+        if feedback_raw:
+            fb_fields = extract_feedback_data(
+                feedback_raw
+            )  # {feedback_summary, feedback_sections}
+            entry["feedback_summary"] = fb_fields.get("feedback_summary")
+            entry["feedback_sections"] = fb_fields.get("feedback_sections")
+        else:
+            entry["feedback_summary"] = None
+            entry["feedback_sections"] = None
+
+        entry["feedback_llm"] = APPLIED_MODEL
+        entry["feedback_prompt_id"] = feedback_prompt_id
+
         cases.append(entry)
 
-    return cases[:5]
+    return cases
 
 
 # ---------------------------------------------------------------------------
@@ -382,18 +448,21 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
 
 
 def load_messages(path: Path = INPUT_PATH) -> list[dict]:
+    # получаю словарь с сообщениями из result.json
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)["messages"]
 
 
-def save_cases(cases: list[dict], path: Path = OUTPUT_PATH) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cases, f, ensure_ascii=False, indent=2)
-
-
+def save_cases_to_db(cases: list[dict]) -> int:
+    """Upserts each case into the resumes table. Returns the number saved."""
+    for case in cases:
+        resumes_repo.upsert(case)
+    return len(cases)
 
 
 if __name__ == "__main__":
+    # init_db()  # для прод-использования лучше `alembic upgrade head`, но это безопасный no-op если схема уже накатана
+
     cases = build_cases(load_messages())
-    save_cases(cases)
-    print(f"Saved {len(cases)} cases to {OUTPUT_PATH}")
+    saved = save_cases_to_db(cases)
+    print(f"Saved {saved} cases to the resumes DB")

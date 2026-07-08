@@ -25,6 +25,34 @@ def create(data: dict) -> int:
         return resume.id
 
 
+def upsert(data: dict) -> int:
+    """
+    Insert a new resume row, or update an existing one (matched by resume_id)
+    with whatever fields are provided. Use this instead of create() when the
+    same source data (e.g. a parser re-run) might already be in the DB.
+    """
+    data = dict(data)
+    if "feedback_sections" in data:
+        data["feedback_sections"] = _clean_sections(data.get("feedback_sections"))
+
+    with get_session() as session:
+        resume = (
+            session.query(Resume)
+            .filter(Resume.resume_id == data["resume_id"])
+            .first()
+        )
+        if resume:
+            for key, value in data.items():
+                setattr(resume, key, value)
+            session.flush()
+            return resume.id
+
+        resume = Resume(**data)
+        session.add(resume)
+        session.flush()
+        return resume.id
+
+
 def get_by_resume_id(resume_id: str) -> Optional[Resume]:
     with get_session() as session:
         resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()

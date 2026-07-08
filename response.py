@@ -22,9 +22,9 @@ openai_client = OpenAI(
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "0"))
 
-MODEL = "llama-3.3-70b-versatile"
-OLLAMA_MODEL = "llama3.2:3b"
-# MODEL = "llama-3.1-8b-instant"
+
+MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 
 
 def generate_response(prompt: str, json_mode: bool = False, system: str | None = None):
