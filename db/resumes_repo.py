@@ -144,6 +144,14 @@ def list_by_feedback_section(section: str) -> list[Resume]:
         return [r for r in rows if r.feedback_sections and section in r.feedback_sections]
 
 
+def list_all() -> list[Resume]:
+    """All resumes in the DB. Used by the Qdrant (re)indexing pipeline."""
+    with get_session() as session:
+        rows = session.query(Resume).all()
+        session.expunge_all()
+        return rows
+
+
 def delete(resume_id: str) -> bool:
     with get_session() as session:
         resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
