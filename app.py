@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import certifi
 from pathlib import Path
@@ -13,6 +12,8 @@ from huggingface_hub import snapshot_download
 from sentence_transformers import SentenceTransformer
 
 from extract.parser import parse_cv_sections
+from db.models import Resume
+from db import resumes_repo
 
 
 load_dotenv()
@@ -21,8 +22,6 @@ load_dotenv()
 # CONFIG
 # ==========================================
 ROOT_DIR = Path(__file__).resolve().parent
-DATA_DIR = ROOT_DIR / "extract" / "data"
-OUTPUT_PATH = DATA_DIR / "cases.json"
 COLLECTION_NAME = "cv_reviews"
 EMBED_MODEL = "intfloat/multilingual-e5-base"
 LOCAL_EMBED_MODEL = ROOT_DIR / "models" / "e5-base"
@@ -75,8 +74,29 @@ def ensure_collection(client, collection_name, vector_size=768, force_recreate=F
 
 
 # ==========================================
+# DB <-> "case" dict adapter
+# encode_weighted_resume / build_resume_text work on a flat dict with
+# keys: role_position, skills, about_me_summary, experience — this keeps
+# those functions unchanged whether the data came from a DB row or a
+# freshly-parsed PDF (which doesn't have a DB row yet).
+# ==========================================
+
+
+def resume_to_case_dict(resume: Resume) -> dict:
+    return {
+        "id": resume.resume_id,
+        "role_position": resume.role_position or "",
+        "skills": resume.skills or "",
+        "about_me_summary": resume.about_summary or resume.about_me_summary_raw or "",
+        "experience": resume.experience or "",
+        "feedback": resume.feedback_raw or "",
+        "feedback_summary": resume.feedback_summary or "",
+        "feedback_sections": resume.feedback_sections or [],
+    }
+
+
+# ==========================================
 # TEXT BUILDER
-# Кейс плоский: {id, role_position, skills, about_me_summary, experience, feedback}
 # ==========================================
 
 
@@ -119,6 +139,7 @@ def embedding_dimension(model: SentenceTransformer) -> int:
 
 
 def load_cv_from_pdf(pdf_path: str | Path) -> dict:
+    """Parses a not-yet-indexed CV for a search query (no DB write)."""
     pdf_path = Path(pdf_path).resolve()
     if not pdf_path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -127,7 +148,14 @@ def load_cv_from_pdf(pdf_path: str | Path) -> dict:
     if sections.get("noeng"):
         raise ValueError("CV must be in English (>= 90% Latin characters in header)")
 
-    return sections
+    return {
+        "role_position": sections.get("role_position") or "",
+        "skills": sections.get("skills") or "",
+        "about_me_summary": sections.get("about_summary")
+        or sections.get("about_me_summary_raw")
+        or "",
+        "experience": sections.get("experience") or "",
+    }
 
 
 def encode_weighted_resume(
@@ -165,41 +193,51 @@ def encode_weighted_resume(
 # ==========================================
 
 
-def load_cases_to_qdrant(
-    client, collection_name, embedding_model, cases_file=OUTPUT_PATH
-):
-    with open(cases_file, "r", encoding="utf-8") as f:
-        cases = json.load(f)
+def load_cases_to_qdrant(client, collection_name, embedding_model):
+    """Reads every resume from the SQLite DB and (re)indexes it in Qdrant."""
+    resumes = resumes_repo.list_all()
 
     points = []
 
-    for case in cases:
+    for resume in resumes:
+        case = resume_to_case_dict(resume)
         resume_text = build_resume_text(case)
 
         if len(resume_text.strip()) < 100:
             continue
 
+        try:
+            point_id = int(resume.resume_id)
+        except (TypeError, ValueError):
+            print(
+                f"Skipping resume_id={resume.resume_id!r}: not a valid Qdrant point id (must be int or UUID)"
+            )
+            continue
+
         vector = encode_weighted_resume(case, embedding_model, prefix="passage")
 
         payload = {
-            "case_id": case.get("id"),
-            "role": case.get("role_position", ""),
-            "skills": case.get("skills", ""),
-            "summary": case.get("about_me_summary", ""),
-            "experience": case.get("experience", ""),
+            "case_id": resume.resume_id,
+            "role": case["role_position"],
+            "skills": case["skills"],
+            "summary": case["about_me_summary"],
+            "experience": case["experience"],
             "resume": resume_text,
-            "feedback": case.get("feedback", ""),
+            "feedback": case["feedback"],
+            "feedback_summary": case["feedback_summary"],
+            "feedback_sections": case["feedback_sections"],
         }
 
         points.append(
             PointStruct(
-                id=case.get("id"),
+                id=point_id,
                 vector=vector,
                 payload=payload,
             )
         )
 
-    client.upsert(collection_name=collection_name, points=points)
+    if points:
+        client.upsert(collection_name=collection_name, points=points)
     print(f"Загружено {len(points)} кейсов")
 
 
@@ -233,6 +271,12 @@ def print_search_results(results) -> None:
         feedback = r.payload.get("feedback") or ""
         if feedback:
             print("feedback:", feedback[:500] + ("..." if len(feedback) > 500 else ""))
+        feedback_summary = r.payload.get("feedback_summary") or ""
+        if feedback_summary:
+            print("feedback_summary:", feedback_summary)
+        sections = r.payload.get("feedback_sections") or []
+        if sections:
+            print("feedback_sections:", ", ".join(sections))
 
 
 # ==========================================
@@ -250,7 +294,7 @@ def main():
     parser.add_argument(
         "--reindex",
         action="store_true",
-        help="Recreate collection and reload cases from cases.json",
+        help="Recreate collection and reload cases from the SQLite DB",
     )
     parser.add_argument("--limit", type=int, default=10, help="Number of results")
     args = parser.parse_args()
@@ -266,7 +310,6 @@ def main():
             client=client,
             collection_name=COLLECTION_NAME,
             embedding_model=model,
-            cases_file=OUTPUT_PATH,
         )
     else:
         ensure_collection(client, COLLECTION_NAME, vector_size=vector_size)
