@@ -454,10 +454,28 @@ def load_messages(path: Path = INPUT_PATH) -> list[dict]:
 
 
 def save_cases_to_db(cases: list[dict]) -> int:
-    """Upserts each case into the resumes table. Returns the number saved."""
+    """
+    Upserts each case into the resumes table, skipping cases whose feedback
+    couldn't be tied to any concrete CV section (feedback_sections is None —
+    e.g. empty feedback, an off-topic question, or a link with no real
+    critique). Returns the number of rows actually saved.
+    """
+    saved = 0
+    skipped = 0
+
     for case in cases:
+        if case.get("feedback_sections") is None:
+            skipped += 1
+            print(
+                f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)"
+            )
+            continue
+
         resumes_repo.upsert(case)
-    return len(cases)
+        saved += 1
+
+    print(f"Skipped {skipped} case(s) with unclear/no feedback")
+    return saved
 
 
 if __name__ == "__main__":
