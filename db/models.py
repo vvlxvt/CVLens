@@ -63,7 +63,7 @@ class Resume(Base):
     experience = Column(Text)
     skills = Column(Text)
     about_me_summary_raw = Column(Text)  # raw "about me" text as parsed from CV
-    role_position_raw = Column(String)  # raw role/title as parsed from CV
+    # role_position_raw = Column(String)  # raw role/title as parsed from CV
 
     # LLM-derived: intro/header extraction (full_name, role_position, summary)
     full_name = Column(String)
