@@ -1,6 +1,8 @@
 import json
 import re
+import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from response import (
@@ -15,7 +17,7 @@ from response import (
     FEEDBACK_USER_TEMPLATE,
 )
 
-# from db.connection import init_db
+# from db.database import init_db
 from db import prompts_repo, resumes_repo
 
 try:
@@ -39,8 +41,8 @@ APPLIED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
 ADMINS = {
     "Aleksandr Valuev",
     "Maksim Pozharskiy",
-    "Evgeny V",
-    "Polina (Полина🪷) Kornilova",
+    'Evgeny V',
+    'Polina (Полина🪷) Kornilova',
     "Artem K",
     "Anna [job offer USA \U0001f1fa\U0001f1f8] Naumova",
 }
@@ -301,12 +303,17 @@ def detect_section(line: str) -> str | None:
     return None
 
 
-def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
+def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR, about_prompt_id: int | None = None) -> dict:
     """
     Разбирает PDF на секции. Возвращает поля, готовые лечь в таблицу resumes:
         experience, skills, about_me_summary_raw,
         full_name, role_position, about_summary,
         about_llm, about_prompt_id
+
+    about_prompt_id: если не передан, будет зарегистрирован через
+    prompts_repo.get_or_create() при каждом вызове (лишний DB round-trip
+    на каждый CV) — при массовой обработке лучше получить его один раз
+    заранее и передавать сюда.
     """
     empty = {
         "experience": "",
@@ -355,12 +362,13 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
     about_me_summary_raw = parsed.pop("about_me_summary")
 
     intro_text = "\n".join(intro_lines) + "\n" + about_me_summary_raw
-    about_prompt_id = prompts_repo.get_or_create(
-        name="intro_extraction",
-        version=INTRO_PROMPT_VERSION,
-        system_text=INTRO_SYSTEM_PROMPT,
-        user_template=INTRO_USER_TEMPLATE,
-    )
+    if about_prompt_id is None:
+        about_prompt_id = prompts_repo.get_or_create(
+            name="intro_extraction",
+            version=INTRO_PROMPT_VERSION,
+            system_text=INTRO_SYSTEM_PROMPT,
+            user_template=INTRO_USER_TEMPLATE,
+        )
     fields = extract_intro_data(intro_text)  # {full_name, role_position, summary}
 
     return {
@@ -381,15 +389,16 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
-    """
-    Строит кейсы: одно CV + склеенный фидбэк от одного или нескольких админов,
-    прогоняет фидбэк через LLM-экстракцию (feedback_summary/feedback_sections).
+MAX_WORKERS = 8  # concurrent CVs in flight; LLM calls are I/O-bound (network/inference wait), so threads help
 
-    Структура кейса соответствует колонкам таблицы resumes.
+
+def _group_messages_by_cv(messages: list[dict]) -> dict[int, dict]:
+    """
+    Pure-Python, no LLM/PDF work: groups admin feedback messages under
+    their parent CV message. Returns {pid: {"file": ..., "feedback_raw": ...}}.
     """
     msgs_by_id: dict[int, dict] = {m["id"]: m for m in messages if "id" in m}
-    raw: dict[int, dict] = {}
+    grouped: dict[int, dict] = {}
 
     for msg in messages:
         if (msg.get("from") or "") not in ADMINS:
@@ -402,16 +411,95 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
             continue
 
         pid = parent["id"]
-        if pid not in raw:
-            sections = parse_cv_sections(parent.get("file", ""), data_dir)
-            if sections.get("noeng"):
-                continue
-            raw[pid] = {"resume_id": str(pid), **sections, "_feedback_parts": []}
+        if pid not in grouped:
+            grouped[pid] = {"file": parent.get("file", ""), "_feedback_parts": []}
 
         fb = clean_feedback_text(extract_message_text(msg))
         if fb:
-            raw[pid]["_feedback_parts"].append(fb)
+            grouped[pid]["_feedback_parts"].append(fb)
 
+    for entry in grouped.values():
+        entry["feedback_raw"] = "\n\n".join(entry.pop("_feedback_parts"))
+
+    return grouped
+
+
+def _is_up_to_date(resume_id: str, feedback_raw: str, about_prompt_id: int, feedback_prompt_id: int) -> bool:
+    """True if this CV is already in the DB with the current model/prompt
+    version and the same feedback text — safe to skip reprocessing."""
+    existing = resumes_repo.get_by_resume_id(resume_id)
+    if existing is None:
+        return False
+    return (
+        existing.about_llm == APPLIED_MODEL
+        and existing.about_prompt_id == about_prompt_id
+        and existing.feedback_llm == APPLIED_MODEL
+        and existing.feedback_prompt_id == feedback_prompt_id
+        and (existing.feedback_raw or "") == feedback_raw
+    )
+
+
+def _process_one_cv(
+    pid: int,
+    file_url: str,
+    feedback_raw: str,
+    data_dir: Path,
+    about_prompt_id: int,
+    feedback_prompt_id: int,
+) -> dict | None:
+    """Runs PDF parsing + both LLM extractions for a single CV. Returns
+    a case dict ready for the DB, or None if parsing failed (non-English CV)."""
+    t0 = time.perf_counter()
+    sections = parse_cv_sections(file_url, data_dir, about_prompt_id=about_prompt_id)
+    t_pdf_and_intro = time.perf_counter() - t0
+    if sections.get("noeng"):
+        return None
+
+    t1 = time.perf_counter()
+    if feedback_raw:
+        fb_fields = extract_feedback_data(feedback_raw)
+        feedback_summary = fb_fields.get("feedback_summary")
+        feedback_sections = fb_fields.get("feedback_sections")
+    else:
+        feedback_summary = None
+        feedback_sections = None
+    t_feedback = time.perf_counter() - t1
+
+    print(
+        f"[timing] resume_id={pid} pdf+intro_llm={t_pdf_and_intro:.1f}s feedback_llm={t_feedback:.1f}s"
+    )
+
+    return {
+        "resume_id": str(pid),
+        **sections,
+        "feedback_raw": feedback_raw,
+        "feedback_summary": feedback_summary,
+        "feedback_sections": feedback_sections,
+        "feedback_llm": APPLIED_MODEL,
+        "feedback_prompt_id": feedback_prompt_id,
+    }
+
+
+def build_cases(messages: list[dict], data_dir: Path = DATA_DIR, max_workers: int = MAX_WORKERS) -> list[dict]:
+    """
+    Строит кейсы: одно CV + склеенный фидбэк от одного или нескольких админов,
+    прогоняет фидбэк через LLM-экстракцию (feedback_summary/feedback_sections).
+
+    CV, уже сохранённые в БД с текущей моделью/версией промпта и тем же
+    текстом фидбэка, пропускаются без обращения к LLM. Обработка новых/
+    изменившихся CV идёт параллельно (LLM-вызовы — это ожидание сети/
+    инференса, поэтому потоки, а не процессы, дают выигрыш).
+
+    Структура кейса соответствует колонкам таблицы resumes.
+    """
+    grouped = _group_messages_by_cv(messages)
+
+    about_prompt_id = prompts_repo.get_or_create(
+        name="intro_extraction",
+        version=INTRO_PROMPT_VERSION,
+        system_text=INTRO_SYSTEM_PROMPT,
+        user_template=INTRO_USER_TEMPLATE,
+    )
     feedback_prompt_id = prompts_repo.get_or_create(
         name="feedback_extraction",
         version=FEEDBACK_PROMPT_VERSION,
@@ -419,25 +507,37 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR) -> list[dict]:
         user_template=FEEDBACK_USER_TEMPLATE,
     )
 
+    todo = {}
+    skipped = 0
+    for pid, entry in grouped.items():
+        if _is_up_to_date(str(pid), entry["feedback_raw"], about_prompt_id, feedback_prompt_id):
+            skipped += 1
+            continue
+        todo[pid] = entry
+
+    if skipped:
+        print(f"Skipping {skipped} already-processed CV(s) (same model/prompt/feedback)")
+    if not todo:
+        return []
+
     cases = []
-    for entry in raw.values():
-        feedback_raw = "\n\n".join(entry.pop("_feedback_parts"))
-        entry["feedback_raw"] = feedback_raw
-
-        if feedback_raw:
-            fb_fields = extract_feedback_data(
-                feedback_raw
-            )  # {feedback_summary, feedback_sections}
-            entry["feedback_summary"] = fb_fields.get("feedback_summary")
-            entry["feedback_sections"] = fb_fields.get("feedback_sections")
-        else:
-            entry["feedback_summary"] = None
-            entry["feedback_sections"] = None
-
-        entry["feedback_llm"] = APPLIED_MODEL
-        entry["feedback_prompt_id"] = feedback_prompt_id
-
-        cases.append(entry)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(
+                _process_one_cv,
+                pid,
+                entry["file"],
+                entry["feedback_raw"],
+                data_dir,
+                about_prompt_id,
+                feedback_prompt_id,
+            ): pid
+            for pid, entry in todo.items()
+        }
+        for future in as_completed(futures):
+            case = future.result()
+            if case is not None:
+                cases.append(case)
 
     return cases
 
@@ -466,9 +566,7 @@ def save_cases_to_db(cases: list[dict]) -> int:
     for case in cases:
         if case.get("feedback_sections") is None:
             skipped += 1
-            print(
-                f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)"
-            )
+            print(f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)")
             continue
 
         resumes_repo.upsert(case)
