@@ -8,6 +8,7 @@ from qdrant_client.models import PointStruct
 from qdrant_client import QdrantClient
 from dotenv import load_dotenv
 from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Filter, FieldCondition, MatchText, TextIndexParams, TokenizerType
 from huggingface_hub import snapshot_download
 from sentence_transformers import SentenceTransformer
 
@@ -71,6 +72,27 @@ def ensure_collection(client, collection_name, vector_size=768, force_recreate=F
         vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
     )
     print(f"Collection '{collection_name}' {'recreated' if exists else 'created'}")
+
+    ensure_text_indexes(client, collection_name)
+
+
+def ensure_text_indexes(client, collection_name):
+    """
+    Full-text payload indexes so MatchText filters (e.g. skills contains
+    "python" AND "django") are fast and token-aware, instead of falling
+    back to a slow exact-substring scan over the whole collection.
+    """
+    for field in ("skills", "role"):
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name=field,
+            field_schema=TextIndexParams(
+                type="text",
+                tokenizer=TokenizerType.WORD,
+                min_token_len=2,
+                lowercase=True,
+            ),
+        )
 
 
 # ==========================================
@@ -209,9 +231,7 @@ def load_cases_to_qdrant(client, collection_name, embedding_model):
         try:
             point_id = int(resume.resume_id)
         except (TypeError, ValueError):
-            print(
-                f"Skipping resume_id={resume.resume_id!r}: not a valid Qdrant point id (must be int or UUID)"
-            )
+            print(f"Skipping resume_id={resume.resume_id!r}: not a valid Qdrant point id (must be int or UUID)")
             continue
 
         vector = encode_weighted_resume(case, embedding_model, prefix="passage")
@@ -246,17 +266,36 @@ def load_cases_to_qdrant(client, collection_name, embedding_model):
 # ==========================================
 
 
+def build_skills_filter(skills: list[str] | None) -> Filter | None:
+    """
+    AND-filter: every given skill must appear (as a token) in the
+    'skills' payload field. E.g. ["python", "django"] only matches
+    resumes whose skills field contains both words.
+    """
+    if not skills:
+        return None
+    return Filter(
+        must=[
+            FieldCondition(key="skills", match=MatchText(text=skill.strip()))
+            for skill in skills
+            if skill.strip()
+        ]
+    )
+
+
 def search_similar_cv(
     client,
     collection_name,
     embedding_model,
     case: dict,
     limit=3,
+    skills_filter: list[str] | None = None,
 ):
     query_vector = encode_weighted_resume(case, embedding_model, prefix="query")
     return client.query_points(
         collection_name=collection_name,
         query=query_vector,
+        query_filter=build_skills_filter(skills_filter),
         limit=limit,
     ).points
 
@@ -297,6 +336,11 @@ def main():
         help="Recreate collection and reload cases from the SQLite DB",
     )
     parser.add_argument("--limit", type=int, default=10, help="Number of results")
+    parser.add_argument(
+        "--skills",
+        type=str,
+        help='Comma-separated skills that must ALL be present, e.g. --skills "python,django"',
+    )
     args = parser.parse_args()
 
     model = load_embedding_model()
@@ -335,6 +379,7 @@ def main():
         embedding_model=model,
         case=case,
         limit=args.limit,
+        skills_filter=[s.strip() for s in args.skills.split(",")] if args.skills else None,
     )
     print_search_results(results)
 
