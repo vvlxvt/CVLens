@@ -152,6 +152,63 @@ def list_all() -> list[Resume]:
         return rows
 
 
+def list_paginated(
+    skip: int = 0,
+    limit: int = 50,
+    llm: Optional[str] = None,
+    has_feedback: Optional[bool] = None,
+    section: Optional[str] = None,
+) -> tuple[list[Resume], int]:
+    """
+    Filtered/paginated listing for the API.
+
+    Note: when `section` is given, filtering happens in Python (SQLite has
+    no portable ORM-level "JSON array contains" query), so the whole
+    matching set is loaded before slicing. Fine for realistic CV volumes;
+    revisit (e.g. a join table) if this table grows into the hundreds of
+    thousands of rows.
+    """
+    with get_session() as session:
+        query = session.query(Resume)
+        if llm:
+            query = query.filter(
+                (Resume.about_llm == llm) | (Resume.feedback_llm == llm)
+            )
+        if has_feedback is True:
+            query = query.filter(Resume.feedback_sections.isnot(None))
+        elif has_feedback is False:
+            query = query.filter(Resume.feedback_sections.is_(None))
+
+        if section:
+            rows = query.order_by(Resume.id).all()
+            session.expunge_all()
+            matching = [
+                r for r in rows if r.feedback_sections and section in r.feedback_sections
+            ]
+            total = len(matching)
+            return matching[skip : skip + limit], total
+
+        total = query.count()
+        rows = query.order_by(Resume.id).offset(skip).limit(limit).all()
+        session.expunge_all()
+        return rows, total
+
+
+def delete_irrelevant() -> list[str]:
+    """
+    Deletes every resume whose feedback couldn't be tied to a concrete CV
+    section (feedback_sections is null — empty feedback, an off-topic
+    question, a link with no real critique, etc). Returns the resume_ids
+    that were deleted.
+    """
+    with get_session() as session:
+        rows = session.query(Resume).filter(Resume.feedback_sections.is_(None)).all()
+        ids = [r.resume_id for r in rows]
+        for r in rows:
+            session.delete(r)
+        return ids
+
+
 def delete(resume_id: str) -> bool:
     with get_session() as session:
         resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
