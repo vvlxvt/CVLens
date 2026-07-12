@@ -449,7 +449,7 @@ def _process_one_cv(
 ) -> dict | None:
     """Runs PDF parsing + both LLM extractions for a single CV. Returns
     a case dict ready for the DB, or None if parsing failed (non-English CV)."""
-    t0 = time.perf_counter()
+    t0 = time.perf_counter() 
     sections = parse_cv_sections(file_url, data_dir, about_prompt_id=about_prompt_id)
     t_pdf_and_intro = time.perf_counter() - t0
     if sections.get("noeng"):

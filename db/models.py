@@ -76,7 +76,7 @@ class Resume(Base):
     # raw recruiter feedback + LLM-derived extraction
     feedback_raw = Column(Text)  # original recruiter feedback text
     feedback_summary = Column(Text)  # LLM-generated 1-2 line summary
-    feedback_sections = Column(JSON)  # list[str] or None, e.g. ["skills", "experience"]
+    feedback_sections = Column(JSON(none_as_null=True)) # list[str] or None, e.g. ["skills", "experience"]
     feedback_llm = Column(String, index=True)  # model used for feedback extraction
     feedback_prompt_id = Column(Integer, ForeignKey("prompts.id"), index=True)
     feedback_prompt = relationship("Prompt", foreign_keys=[feedback_prompt_id])
