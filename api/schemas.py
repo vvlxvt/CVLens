@@ -7,7 +7,11 @@ from db.resumes_repo import ALLOWED_SECTIONS
 
 
 class ResumeIn(BaseModel):
-    """Shape accepted by POST /resumes/upload — matches parser.py's build_cases() output."""
+    """
+    Shape of a single parsed+processed resume row. No longer the upload
+    payload (see TelegramExportIn) — this is the base for ResumeOut, i.e.
+    what a DB row looks like when returned by GET endpoints.
+    """
 
     resume_id: str
 
@@ -41,6 +45,19 @@ class ResumeIn(BaseModel):
         return value
 
 
+class TelegramExportIn(BaseModel):
+    """
+    Upload payload for POST /resumes/upload — the raw Telegram chat export
+    JSON (i.e. the full contents of result.json, unmodified): a list of
+    message objects under "messages". Message fields vary a lot depending
+    on type (text/photo/document/service message/etc), so they're kept as
+    loose dicts here — parser.build_cases() does the actual field-level
+    parsing, same as when running parser.py directly from the CLI.
+    """
+
+    messages: list[dict]
+
+
 class ResumeOut(ResumeIn):
     """Shape returned by GET endpoints — adds DB-generated fields."""
 
@@ -55,6 +72,9 @@ class UploadResult(BaseModel):
     received: int
     saved: int
     saved_ids: list[str]
+    skipped_ids: list[
+        str
+    ]  # parsed OK, but no clear feedback (feedback_sections is null)
 
 
 class DeleteResult(BaseModel):

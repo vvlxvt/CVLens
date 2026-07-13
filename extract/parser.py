@@ -1,9 +1,12 @@
 import json
+import os
 import re
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+import requests
 
 from response import (
     extract_intro_data,
@@ -17,7 +20,6 @@ from response import (
     FEEDBACK_USER_TEMPLATE,
 )
 
-# from db.database import init_db
 from db import prompts_repo, resumes_repo
 
 try:
@@ -37,6 +39,8 @@ FEEDBACK_PROMPT_VERSION = "v1"
 
 # Model actually applied by generate_response() for the current LLM_PROVIDER.
 APPLIED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 ADMINS = {
     "Aleksandr Valuev",
@@ -449,7 +453,7 @@ def _process_one_cv(
 ) -> dict | None:
     """Runs PDF parsing + both LLM extractions for a single CV. Returns
     a case dict ready for the DB, or None if parsing failed (non-English CV)."""
-    t0 = time.perf_counter() 
+    t0 = time.perf_counter()
     sections = parse_cv_sections(file_url, data_dir, about_prompt_id=about_prompt_id)
     t_pdf_and_intro = time.perf_counter() - t0
     if sections.get("noeng"):
@@ -576,9 +580,43 @@ def save_cases_to_db(cases: list[dict]) -> int:
     return saved
 
 
-if __name__ == "__main__":
-    # init_db()  # для прод-использования лучше `alembic upgrade head`, но это безопасный no-op если схема уже накатана
+def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BASE_URL) -> dict:
+    """
+    Uploads result.json to the API's /resumes/upload endpoint as a file
+    (multipart/form-data — the same way a web form's file picker would).
+    The API runs build_cases() itself (PDF parsing + LLM extraction) and
+    upserts the results — this function does no local processing, just
+    the HTTP call.
 
-    cases = build_cases(load_messages())
-    saved = save_cases_to_db(cases)
-    print(f"Saved {saved} cases to the resumes DB")
+    Use this when the API server has access to the CV PDFs on its own
+    filesystem (extract/data/) — same assumption as running parser.py
+    directly. Returns the API's UploadResult as a dict.
+    """
+    with open(json_path, "rb") as f:
+        try:
+            response = requests.post(
+                f"{api_base_url}/resumes/upload",
+                files={"file": (json_path.name, f, "application/json")},
+                timeout=600,  # the API runs the full LLM pipeline synchronously — can take a while
+            )
+        except requests.exceptions.ConnectionError as e:
+            raise RuntimeError(
+                f"Could not reach the API at {api_base_url}. Is it running? (uvicorn api.main:app)"
+            ) from e
+
+    if response.status_code in (400, 422):
+        raise RuntimeError(f"API rejected the upload ({response.status_code}): {response.json()}")
+    response.raise_for_status()
+
+    result = response.json()
+    print(
+        f"API processed {result['received']} CV(s): saved {result['saved']}, "
+        f"skipped {len(result['skipped_ids'])} with unclear feedback"
+    )
+    return result
+
+
+if __name__ == "__main__":
+    # Pick ONE of these — not both:
+    upload_file_via_api()                                    # server does build_cases() + save
+    # save_cases_to_db(build_cases(load_messages()))          # process + write locally, no API needed

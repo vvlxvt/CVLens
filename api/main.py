@@ -1,11 +1,14 @@
+import json
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from db import resumes_repo
+from extract.parser import build_cases
 from api.schemas import (
-    ResumeIn,
+    TelegramExportIn,
     ResumeOut,
     UploadResult,
     DeleteResult,
@@ -40,18 +43,51 @@ def health():
 
 
 @app.post("/resumes/upload", response_model=UploadResult)
-def upload_resumes(resumes: list[ResumeIn]):
+async def upload_resumes(file: UploadFile = File(...)):
     """
-    Bulk upsert. Body is a JSON array of resume objects (e.g. the output of
-    parser.py's build_cases()). Existing resume_id rows are updated in place.
+    Accepts result.json uploaded as a file (multipart/form-data, field name
+    "file") — the exact file Telegram's chat export produces, unmodified.
+    Does the full pipeline server-side: parses any CV PDFs the messages
+    reference (these must already exist under extract/data/, same as
+    running parser.py from the CLI), runs the LLM intro/feedback
+    extraction, and upserts the results into the DB.
+
+    CVs with no clear feedback (feedback_sections is null) are parsed but
+    not saved — their resume_ids come back in skipped_ids.
+
+    Note: this runs the full LLM pipeline synchronously, so a large export
+    can take a while to respond — set a generous client-side timeout.
     """
+    raw = await file.read()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400, detail=f"'{file.filename}' is not valid JSON: {e}"
+        )
+
+    try:
+        export = TelegramExportIn(**data)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+
+    cases = build_cases(export.messages)
+
     saved_ids = []
-    for resume in resumes:
-        resumes_repo.upsert(resume.model_dump())
-        saved_ids.append(resume.resume_id)
+    skipped_ids = []
+    for case in cases:
+        if case.get("feedback_sections") is None:
+            skipped_ids.append(case["resume_id"])
+            continue
+        resumes_repo.upsert(case)
+        saved_ids.append(case["resume_id"])
 
     return UploadResult(
-        received=len(resumes), saved=len(saved_ids), saved_ids=saved_ids
+        received=len(cases),
+        saved=len(saved_ids),
+        saved_ids=saved_ids,
+        skipped_ids=skipped_ids,
     )
 
 
@@ -73,10 +109,6 @@ def list_resumes(
         None, description="Only resumes whose feedback_sections contains this value"
     ),
 ):
-    """
-      paginated list with llm / has_feedback /
-    section filters
-    """
     rows, total = resumes_repo.list_paginated(
         skip=skip, limit=limit, llm=llm, has_feedback=has_feedback, section=section
     )
@@ -85,9 +117,6 @@ def list_resumes(
 
 @app.get("/resumes/{resume_id}", response_model=ResumeOut)
 def get_resume(resume_id: str):
-    """
-    single record, 404 if missing
-    """
     resume = resumes_repo.get_by_resume_id(resume_id)
     if resume is None:
         raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
@@ -97,26 +126,10 @@ def get_resume(resume_id: str):
 # ---------------------------------------------------------------------------
 # Delete
 # ---------------------------------------------------------------------------
-# NOTE: the literal "/resumes/irrelevant" route must be declared BEFORE
-# "/resumes/{resume_id}" — otherwise FastAPI would match "irrelevant" as a
-# resume_id path parameter and this route would never be reached.
-
-
-@app.delete("/resumes/irrelevant", response_model=DeleteResult)
-def delete_irrelevant_resumes():
-    """
-    Deletes every resume with no usable feedback (feedback_sections is
-    null — empty/off-topic feedback, a link with no critique, etc).
-    """
-    deleted_ids = resumes_repo.delete_irrelevant()
-    return DeleteResult(deleted=len(deleted_ids), deleted_ids=deleted_ids)
 
 
 @app.delete("/resumes/{resume_id}", response_model=DeleteResult)
 def delete_resume(resume_id: str):
-    """
-    deletes a single record, 404 if missing
-    """
     deleted = resumes_repo.delete(resume_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
