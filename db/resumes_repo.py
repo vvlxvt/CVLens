@@ -194,21 +194,6 @@ def list_paginated(
         return rows, total
 
 
-def delete_irrelevant() -> list[str]:
-    """
-    Deletes every resume whose feedback couldn't be tied to a concrete CV
-    section (feedback_sections is null — empty feedback, an off-topic
-    question, a link with no real critique, etc). Returns the resume_ids
-    that were deleted.
-    """
-    with get_session() as session:
-        rows = session.query(Resume).filter(Resume.feedback_sections.is_(None)).all()
-        ids = [r.resume_id for r in rows]
-        for r in rows:
-            session.delete(r)
-        return ids
-
-
 def delete(resume_id: str) -> bool:
     with get_session() as session:
         resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
