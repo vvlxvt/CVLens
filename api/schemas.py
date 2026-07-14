@@ -18,7 +18,7 @@ class ResumeIn(BaseModel):
     experience: Optional[str] = None
     skills: Optional[str] = None
     about_me_summary_raw: Optional[str] = None
-    # role_position_raw: Optional[str] = None
+    role_position_raw: Optional[str] = None
 
     full_name: Optional[str] = None
     role_position: Optional[str] = None
@@ -82,8 +82,22 @@ class DeleteResult(BaseModel):
     deleted_ids: list[str]
 
 
-class PaginatedResumes(BaseModel):
+class ResumeCard(BaseModel):
+    """Lightweight shape for the list/card-grid view — just enough to render
+    a card. Click-through to the full record uses GET /resumes/{resume_id}
+    (ResumeOut, all DB fields)."""
+
+    resume_id: str
+    role_position: Optional[str] = None
+    feedback_summary: Optional[str] = None
+    feedback_sections: Optional[list[str]] = None
+    llm: Optional[str] = (
+        None  # the model that produced feedback_summary/feedback_sections
+    )
+
+
+class PaginatedResumeCards(BaseModel):
     total: int
     skip: int
     limit: int
-    items: list[ResumeOut]
+    items: list[ResumeCard]
