@@ -9,10 +9,11 @@ from db import resumes_repo
 from extract.parser import build_cases
 from api.schemas import (
     TelegramExportIn,
+    ResumeCard,
     ResumeOut,
     UploadResult,
     DeleteResult,
-    PaginatedResumes,
+    PaginatedResumeCards,
 )
 
 app = FastAPI(
@@ -96,7 +97,7 @@ async def upload_resumes(file: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/resumes", response_model=PaginatedResumes)
+@app.get("/resumes", response_model=PaginatedResumeCards)
 def list_resumes(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
@@ -109,10 +110,25 @@ def list_resumes(
         None, description="Only resumes whose feedback_sections contains this value"
     ),
 ):
+    """
+    Card-grid listing: one lightweight card per resume (role_position,
+    feedback_summary, feedback_sections, llm). Click a card and fetch
+    GET /resumes/{resume_id} for the full record.
+    """
     rows, total = resumes_repo.list_paginated(
         skip=skip, limit=limit, llm=llm, has_feedback=has_feedback, section=section
     )
-    return PaginatedResumes(total=total, skip=skip, limit=limit, items=rows)
+    items = [
+        ResumeCard(
+            resume_id=r.resume_id,
+            role_position=r.role_position,
+            feedback_summary=r.feedback_summary,
+            feedback_sections=r.feedback_sections,
+            llm=r.feedback_llm,
+        )
+        for r in rows
+    ]
+    return PaginatedResumeCards(total=total, skip=skip, limit=limit, items=items)
 
 
 @app.get("/resumes/{resume_id}", response_model=ResumeOut)
