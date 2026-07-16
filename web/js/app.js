@@ -5,6 +5,13 @@
 
   const listState = { skip: 0, limit: 12, total: 0 };
 
+  // Ordered resume_ids for the detail view's prev/next buttons — lets the
+  // user page through CVs without bouncing back to the grid. Rebuilt
+  // (fetched fresh) whenever it doesn't already contain the resume being
+  // opened; reused as-is across consecutive Prev/Next clicks.
+  let browseIds = [];
+  let browseIndex = -1;
+
   const el = (id) => document.getElementById(id);
   const grid = el("cardGrid");
   const loadingPanel = el("loadingPanel");
@@ -53,6 +60,8 @@
 
   function navigateToList() {
     history.pushState({}, "", urlFor(null));
+    browseIds = [];
+    browseIndex = -1;
     showListView();
   }
 
@@ -72,10 +81,10 @@
   // List view — GET /resumes
   // ---------------------------------------------------------------------
 
-  function buildQuery() {
+  function buildQuery(skip = listState.skip, limit = listState.limit) {
     const qs = new URLSearchParams();
-    qs.set("skip", listState.skip);
-    qs.set("limit", listState.limit);
+    qs.set("skip", skip);
+    qs.set("limit", limit);
     const hasFeedback = el("filterHasFeedback").value;
     const section = el("filterSection").value;
     const llm = el("filterLlm").value.trim();
@@ -210,6 +219,50 @@
     ].join("");
   }
 
+  const API_MAX_LIMIT = 500; // matches the API's le=500 cap on GET /resumes
+
+  async function fetchBrowseIds() {
+    // Same filters as the toolbar, but flattened into one ordered id list
+    // (ignores the grid's own skip/limit) so prev/next can page through
+    // every matching resume, not just the currently-loaded grid page.
+    const res = await fetch(
+      `${API_BASE_URL}/resumes?${buildQuery(0, API_MAX_LIMIT)}`,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.items.map((item) => item.resume_id);
+  }
+
+  async function ensureBrowseContext(resumeId) {
+    if (browseIds.includes(resumeId)) {
+      browseIndex = browseIds.indexOf(resumeId);
+      return;
+    }
+    try {
+      browseIds = await fetchBrowseIds();
+    } catch (err) {
+      console.error(err);
+      browseIds = [];
+    }
+    browseIndex = browseIds.indexOf(resumeId);
+  }
+
+  function updateNavButtons() {
+    el("detailPrevBtn").disabled = browseIndex <= 0;
+    el("detailNextBtn").disabled =
+      browseIndex === -1 || browseIndex >= browseIds.length - 1;
+  }
+
+  function goToPrevResume() {
+    if (browseIndex > 0) navigateToDetail(browseIds[browseIndex - 1]);
+  }
+
+  function goToNextResume() {
+    if (browseIndex >= 0 && browseIndex < browseIds.length - 1) {
+      navigateToDetail(browseIds[browseIndex + 1]);
+    }
+  }
+
   async function showDetailView(resumeId) {
     listView.classList.add("d-none");
     detailView.classList.remove("d-none");
@@ -217,6 +270,9 @@
     detailError.classList.add("d-none");
     detailLoading.classList.remove("d-none");
     window.scrollTo(0, 0);
+
+    await ensureBrowseContext(resumeId);
+    updateNavButtons();
 
     try {
       const res = await fetch(
@@ -255,6 +311,8 @@
   });
 
   el("backToListBtn").addEventListener("click", navigateToList);
+  el("detailPrevBtn").addEventListener("click", goToPrevResume);
+  el("detailNextBtn").addEventListener("click", goToNextResume);
 
   syncFromUrl();
 })();
