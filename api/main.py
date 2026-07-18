@@ -187,6 +187,14 @@ def _check_known_prompt_name(name: str):
         )
 
 
+@app.get("/prompts/{name}", response_model=list[PromptOut])
+def list_prompt_versions(name: str):
+    """All saved versions for `name`, oldest first — for the web form's
+    version history navigation (prev/next through past prompts)."""
+    _check_known_prompt_name(name)
+    return prompts_repo.list_all(name)
+
+
 @app.get("/prompts/{name}/latest", response_model=PromptOut)
 def get_latest_prompt(name: str):
     _check_known_prompt_name(name)
