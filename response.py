@@ -1,16 +1,11 @@
 from dotenv import load_dotenv
 from openai import OpenAI
+import openai
 from ollama import chat
 import json
 import os
 
-
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent
-DATA_DIR = ROOT_DIR / "extract" / "data"
-
-load_dotenv()
+load_dotenv(override=True)
 
 groq_api_key = os.getenv("GROQ_API_KEY")
 
@@ -22,41 +17,45 @@ openai_client = OpenAI(
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "0"))
 
-
 MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 
+# Sticky flag: once the cloud provider fails once (rate limit, exhausted
+# quota, auth issue, connection error — anything), assume it's unusable
+# for the rest of this process and go straight to Ollama from then on.
+# Without this, every subsequent call would re-attempt (and wait on) a
+# provider that's already known to be down, slowing everything down.
+_force_ollama = False
 
-def generate_response(prompt: str, json_mode: bool = False, system: str | None = None):
 
+def _call_groq(prompt: str, json_mode: bool, system: str | None):
+    if not openai_client:
+        raise ValueError("GROQ_API_KEY is missing")
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    kwargs = {
+        "model": MODEL,
+        "messages": messages,
+        "temperature": 0,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = openai_client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content
+    return json.loads(content) if json_mode else content
+
+
+def _call_ollama(prompt: str, json_mode: bool, system: str | None):
     default_system = (
         "You are a strict information extraction engine. "
         "You ALWAYS return ONLY valid JSON. No markdown. No text."
     )
 
-    if LLM_PROVIDER == "openai":
-        if not openai_client:
-            raise ValueError("OPENAI_API_KEY is missing")
-
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-
-        kwargs = {
-            "model": MODEL,
-            "messages": messages,
-            "temperature": 0,
-        }
-
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-
-        response = openai_client.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content
-        return json.loads(content) if json_mode else content
-
-    # Default: Ollama
     options = {
         "num_gpu": ollama_num_gpu,
         "temperature": 0,
@@ -78,6 +77,34 @@ def generate_response(prompt: str, json_mode: bool = False, system: str | None =
         raise ValueError("Empty response from LLM")
 
     return json.loads(content.strip()) if json_mode else content.strip()
+
+
+def generate_response(prompt: str, json_mode: bool = False, system: str | None = None):
+    """
+    Returns (result, applied_model) — the model actually used for THIS call,
+    since a run can start on Groq/OpenAI and fall back to Ollama partway
+    through if the cloud provider runs out of tokens/quota.
+
+    If LLM_PROVIDER="openai", tries Groq/OpenAI first. On any failure
+    (rate limit, exhausted quota, auth error, network error — anything
+    from the openai SDK), logs why and falls back to the local Ollama
+    model for this call and every call after it in this process.
+    """
+    global _force_ollama
+
+    if LLM_PROVIDER == "openai" and not _force_ollama:
+        try:
+            result = _call_groq(prompt, json_mode, system)
+            return result, MODEL
+        except openai.OpenAIError as e:
+            print(
+                f"[response] Groq/OpenAI call failed ({type(e).__name__}: {e}); "
+                f"falling back to Ollama ({OLLAMA_MODEL}) for the rest of this run."
+            )
+            _force_ollama = True
+
+    result = _call_ollama(prompt, json_mode, system)
+    return result, OLLAMA_MODEL
 
 
 SYSTEM = """You are a JSON extraction bot.
@@ -112,10 +139,8 @@ def build_intro_prompt(intro_text: str) -> tuple[str, str]:
     return SYSTEM, USER_TEMPLATE.format(intro_text=intro_text)
 
 
-def extract_intro_data(intro_lines: str) -> dict:
-    print("=== INTRO TEXT ===")
-    print(repr(intro_lines))
-    print("==================")
+def extract_intro_data(intro_lines: str):
+    """Returns (fields_dict, applied_model)."""
     system, user = build_intro_prompt(intro_lines)
     return generate_response(user, json_mode=True, system=system)
 
@@ -188,41 +213,7 @@ def build_feedback_prompt(feedback_text: str) -> tuple[str, str]:
     return FEEDBACK_SYSTEM, FEEDBACK_USER_TEMPLATE.format(feedback_text=feedback_text)
 
 
-ALLOWED_SECTIONS = (
-    "role_position",
-    "skills",
-    "about_me_summary",
-    "experience",
-    "formatting",
-)
-
-
-def extract_feedback_data(feedback_text: str) -> dict:
-    print("=== FEEDBACK TEXT ===")
-    print(repr(feedback_text))
-    print("=====================")
+def extract_feedback_data(feedback_text: str):
+    """Returns (fields_dict, applied_model)."""
     system, user = build_feedback_prompt(feedback_text)
-    result = generate_response(user, json_mode=True, system=system)
-
-    sections = result.get("feedback_sections")
-
-    if sections:
-        # keep only allowed values, drop anything the model hallucinated
-        filtered = [s for s in sections if s in ALLOWED_SECTIONS]
-        result["feedback_sections"] = filtered or None
-    else:
-        result["feedback_sections"] = None
-
-    return result
-
-
-if __name__ == "__main__":
-    import json as _json
-
-    with open(DATA_DIR / "cases.json", encoding="utf-8") as f:
-        cases = _json.load(f)
-
-    for case in cases:
-        result = extract_feedback_data(case["feedback"])
-
-        print(case["id"], "->", result)
+    return generate_response(user, json_mode=True, system=system)
