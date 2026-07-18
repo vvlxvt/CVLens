@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from db.resumes_repo import ALLOWED_SECTIONS
 
@@ -72,9 +72,7 @@ class UploadResult(BaseModel):
     received: int
     saved: int
     saved_ids: list[str]
-    skipped_ids: list[
-        str
-    ]  # parsed OK, but no clear feedback (feedback_sections is null)
+    skipped_ids: list[str]  # parsed OK, but no clear feedback (feedback_sections is null)
 
 
 class DeleteResult(BaseModel):
@@ -91,9 +89,7 @@ class ResumeCard(BaseModel):
     role_position: Optional[str] = None
     feedback_summary: Optional[str] = None
     feedback_sections: Optional[list[str]] = None
-    llm: Optional[str] = (
-        None  # the model that produced feedback_summary/feedback_sections
-    )
+    llm: Optional[str] = None  # the model that produced feedback_summary/feedback_sections
 
 
 class PaginatedResumeCards(BaseModel):
@@ -101,3 +97,19 @@ class PaginatedResumeCards(BaseModel):
     skip: int
     limit: int
     items: list[ResumeCard]
+
+
+class PromptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    version: str
+    system_text: str
+    user_template: str
+    created_at: datetime
+
+
+class PromptCreateIn(BaseModel):
+    system_text: str = Field(min_length=1)
+    user_template: str = Field(min_length=1)
