@@ -49,3 +49,34 @@ def get_latest(name: str) -> Optional[Prompt]:
         if prompt:
             session.expunge(prompt)
         return prompt
+
+
+def create_next_version(name: str, system_text: str, user_template: str) -> Prompt:
+    """
+    Saves a new prompt version for `name`, auto-numbered as one past the
+    current highest version for that name (v1, v2, v3, ...). Used by the
+    prompt-editing web form: every save is a new row (full history kept),
+    never an overwrite of an existing one.
+    """
+    with get_session() as session:
+        existing_versions = [
+            row.version
+            for row in session.query(Prompt.version).filter(Prompt.name == name).all()
+        ]
+        numbers = []
+        for v in existing_versions:
+            if v.startswith("v") and v[1:].isdigit():
+                numbers.append(int(v[1:]))
+        next_version = f"v{max(numbers) + 1}" if numbers else "v1"
+
+        prompt = Prompt(
+            name=name,
+            version=next_version,
+            system_text=system_text,
+            user_template=user_template,
+        )
+        session.add(prompt)
+        session.flush()
+        session.refresh(prompt)
+        session.expunge(prompt)
+        return prompt

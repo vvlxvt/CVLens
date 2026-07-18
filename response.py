@@ -5,6 +5,8 @@ from ollama import chat
 import json
 import os
 
+from db import prompts_repo
+
 load_dotenv(override=True)
 
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -107,113 +109,49 @@ def generate_response(prompt: str, json_mode: bool = False, system: str | None =
     return result, OLLAMA_MODEL
 
 
-SYSTEM = """You are a JSON extraction bot.
-You extract structured data from CV header text.
-You MUST respond with valid JSON only.
-No markdown. No explanations. No extra text.
-Output MUST start with { and end with }.
-Output MUST contain ONLY these three keys: full_name, role_position, summary.
-Do NOT add any other keys."""
-
-USER_TEMPLATE = """Extract data from this CV header.
-
-RULES:
-- full_name: person's full name only (e.g. "John Smith"). NOT a job title. If unclear → null
-- role_position: job title or position (e.g. "Software Engineer", "Product Manager"). NOT a name. If missing → null
-- summary: 1-2 sentence professional summary if present. If missing → null
-- Use JSON null (not the string "null") for missing values
-- Output ONLY these three keys, nothing else
-
-EXAMPLE OUTPUT:
-{{
-  "full_name": "John Smith",
-  "role_position": "Backend Engineer",
-  "summary": "5 years of experience building scalable APIs."
-}}
-
-CV HEADER:
-{intro_text}"""
+def _load_prompt(name: str):
+    """Fetches the current (latest) prompt version for `name` from the DB.
+    Prompts are managed via the web form (POST /prompts/{name}) — there is
+    no hardcoded fallback here on purpose, so editing a prompt in the DB is
+    the single source of truth. Run `python -m db.seed_prompts` once on a
+    fresh DB to seed the initial versions."""
+    prompt = prompts_repo.get_latest(name)
+    if prompt is None:
+        raise RuntimeError(
+            f"No prompt found in the DB for {name!r}. "
+            f"Run `python -m db.seed_prompts` to seed the initial versions, "
+            f"or create one via POST /prompts/{name}."
+        )
+    return prompt
 
 
-def build_intro_prompt(intro_text: str) -> tuple[str, str]:
-    return SYSTEM, USER_TEMPLATE.format(intro_text=intro_text)
+def build_intro_prompt(intro_text: str) -> tuple[str, str, int]:
+    prompt = _load_prompt("intro_extraction")
+    user = prompt.user_template.format(intro_text=intro_text)
+    return prompt.system_text, user, prompt.id
 
 
 def extract_intro_data(intro_lines: str):
-    """Returns (fields_dict, applied_model)."""
-    system, user = build_intro_prompt(intro_lines)
-    return generate_response(user, json_mode=True, system=system)
+    """Returns (fields_dict, applied_model, prompt_id)."""
+    system, user, prompt_id = build_intro_prompt(intro_lines)
+    result, applied_model = generate_response(user, json_mode=True, system=system)
+    return result, applied_model, prompt_id
 
 
-FEEDBACK_SYSTEM = """You are a JSON extraction bot.
-You extract structured data from recruiter feedback about a CV/resume.
-You MUST respond with valid JSON only.
-No markdown. No explanations. No extra text.
-Output MUST start with { and end with }.
-Output MUST contain ONLY these two keys: feedback_summary, feedback_sections.
-Do NOT add any other keys."""
-
-FEEDBACK_USER_TEMPLATE = """Extract data from this recruiter feedback about a CV.
-Feedback may be in Russian or English, may be messy (copy-pasted with ">>" separators,
-line breaks, quoted bullet points from the CV), and may not relate to the CV at all
-(a side question, a link, small talk).
-
-RULES:
-- feedback_summary: 1-2 sentence summary of what the recruiter is actually saying,
-  written in the same language as the feedback. If the feedback is empty, is just a
-  side question unrelated to CV content (e.g. "Is there a Google office in Kazakhstan?"),
-  or is just a link/video recommendation with no direct CV critique → null
-- feedback_sections: a JSON array of CV sections the feedback gives critique/advice about.
-  Allowed values ONLY:
-    "experience"        - work history, bullet points, achievements, metrics, wording of duties
-    "skills"             - tech stack / skills list, outdated or irrelevant technologies
-    "about_me_summary"   - the "about me" / professional summary section
-    "role_position"      - job title / desired position framing
-    "formatting"          - layout, length, links, contact info, structure, visual presentation
-  If the feedback is about the CV as a whole (general career advice) or gives no concrete
-  CV critique (a question, off-topic remark, link) → null (not an empty array)
-- Use JSON null (not the string "null") for missing/unclear values
-- Output ONLY these two keys, nothing else
-
-EXAMPLES:
-
-Feedback: "Что это?"
-Output:
-{{
-  "feedback_summary": "Рекрутер не понимает, о чём идёт речь.",
-  "feedback_sections": null
-}}
-
-Feedback: "У тебя в резюме: WinForms, WebForms, WPF, XAML, SVN. Где мой 2007й"
-Output:
-{{
-  "feedback_summary": "Стек в резюме выглядит устаревшим для рынка 2026 года.",
-  "feedback_sections": ["skills"]
-}}
-
-Feedback: "15 критических прям много лишнего, много буллетов ужимаются в 1... Fixed critical video call bugs - буллет ни о чём"
-Output:
-{{
-  "feedback_summary": "Опыт перегружен лишними деталями, часть буллетов не несёт ценности и требует сокращения.",
-  "feedback_sections": ["experience"]
-}}
-
-Feedback: "LinkedIn можно сделать красивую ссылку в настройках."
-Output:
-{{
-  "feedback_summary": "Совет оформить ссылку на LinkedIn как гиперссылку вместо сырого текста.",
-  "feedback_sections": ["formatting"]
-}}
-
-RECRUITER FEEDBACK:
-{feedback_text}"""
-
-
-def build_feedback_prompt(feedback_text: str) -> tuple[str, str]:
-    return FEEDBACK_SYSTEM, FEEDBACK_USER_TEMPLATE.format(feedback_text=feedback_text)
+def build_feedback_prompt(feedback_text: str) -> tuple[str, str, int]:
+    prompt = prompts_repo.get_latest("feedback_extraction")
+    if prompt is None:
+        raise RuntimeError(
+            "No prompt found in the DB for 'feedback_extraction'. "
+            "Run `python -m db.seed_prompts` to seed the initial versions, "
+            "or create one via POST /prompts/feedback_extraction."
+        )
+    user = prompt.user_template.format(feedback_text=feedback_text)
+    return prompt.system_text, user, prompt.id
 
 
 def extract_feedback_data(feedback_text: str):
-    """Returns (fields_dict, applied_model)."""
-    system, user = build_feedback_prompt(feedback_text)
-    return generate_response(user, json_mode=True, system=system)
+    """Returns (fields_dict, applied_model, prompt_id)."""
+    system, user, prompt_id = build_feedback_prompt(feedback_text)
+    result, applied_model = generate_response(user, json_mode=True, system=system)
+    return result, applied_model, prompt_id

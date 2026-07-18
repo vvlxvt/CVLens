@@ -14,10 +14,6 @@ from response import (
     LLM_PROVIDER,
     MODEL,
     OLLAMA_MODEL,
-    SYSTEM as INTRO_SYSTEM_PROMPT,
-    USER_TEMPLATE as INTRO_USER_TEMPLATE,
-    FEEDBACK_SYSTEM,
-    FEEDBACK_USER_TEMPLATE,
 )
 
 from db import prompts_repo, resumes_repo
@@ -30,12 +26,6 @@ except ImportError as exc:
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 INPUT_PATH = DATA_DIR / "result.json"
-
-# Bump these when INTRO_SYSTEM_PROMPT/INTRO_USER_TEMPLATE or
-# FEEDBACK_SYSTEM/FEEDBACK_USER_TEMPLATE change in a way that should
-# invalidate previously-extracted rows (so get_stale_* picks them up).
-INTRO_PROMPT_VERSION = "v1"
-FEEDBACK_PROMPT_VERSION = "v1"
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
@@ -51,8 +41,8 @@ PREFERRED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
 ADMINS = {
     "Aleksandr Valuev",
     "Maksim Pozharskiy",
-    "Evgeny V",
-    "Polina (Полина🪷) Kornilova",
+    'Evgeny V',
+    'Polina (Полина🪷) Kornilova',
     "Artem K",
     "Anna [job offer USA \U0001f1fa\U0001f1f8] Naumova",
 }
@@ -313,19 +303,12 @@ def detect_section(line: str) -> str | None:
     return None
 
 
-def parse_cv_sections(
-    file_url: str, data_dir: Path = DATA_DIR, about_prompt_id: int | None = None
-) -> dict:
+def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
     """
     Разбирает PDF на секции. Возвращает поля, готовые лечь в таблицу resumes:
         experience, skills, about_me_summary_raw,
         full_name, role_position, about_summary,
         about_llm, about_prompt_id
-
-    about_prompt_id: если не передан, будет зарегистрирован через
-    prompts_repo.get_or_create() при каждом вызове (лишний DB round-trip
-    на каждый CV) — при массовой обработке лучше получить его один раз
-    заранее и передавать сюда.
     """
     empty = {
         "experience": "",
@@ -374,16 +357,7 @@ def parse_cv_sections(
     about_me_summary_raw = parsed.pop("about_me_summary")
 
     intro_text = "\n".join(intro_lines) + "\n" + about_me_summary_raw
-    if about_prompt_id is None:
-        about_prompt_id = prompts_repo.get_or_create(
-            name="intro_extraction",
-            version=INTRO_PROMPT_VERSION,
-            system_text=INTRO_SYSTEM_PROMPT,
-            user_template=INTRO_USER_TEMPLATE,
-        )
-    fields, about_model = extract_intro_data(
-        intro_text
-    )  # ({full_name, role_position, summary}, model)
+    fields, about_model, about_prompt_id = extract_intro_data(intro_text)  # ({full_name, role_position, summary}, model, prompt_id)
 
     return {
         **parsed,
@@ -438,9 +412,7 @@ def _group_messages_by_cv(messages: list[dict]) -> dict[int, dict]:
     return grouped
 
 
-def _is_up_to_date(
-    resume_id: str, feedback_raw: str, about_prompt_id: int, feedback_prompt_id: int
-) -> bool:
+def _is_up_to_date(resume_id: str, feedback_raw: str, about_prompt_id: int, feedback_prompt_id: int) -> bool:
     """True if this CV is already in the DB with the preferred model/prompt
     version and the same feedback text — safe to skip reprocessing. A row
     saved via an Ollama fallback will NOT count as up to date once the
@@ -457,36 +429,28 @@ def _is_up_to_date(
     )
 
 
-def _process_one_cv(
-    pid: int,
-    file_url: str,
-    feedback_raw: str,
-    data_dir: Path,
-    about_prompt_id: int,
-    feedback_prompt_id: int,
-) -> dict | None:
+def _process_one_cv(pid: int, file_url: str, feedback_raw: str, data_dir: Path) -> dict | None:
     """Runs PDF parsing + both LLM extractions for a single CV. Returns
     a case dict ready for the DB, or None if parsing failed (non-English CV)
     or the whole CV couldn't be processed (logged, not raised — one bad CV
     shouldn't take down the rest of the batch)."""
     try:
         t0 = time.perf_counter()
-        sections = parse_cv_sections(
-            file_url, data_dir, about_prompt_id=about_prompt_id
-        )
+        sections = parse_cv_sections(file_url, data_dir)
         t_pdf_and_intro = time.perf_counter() - t0
         if sections.get("noeng"):
             return None
 
         t1 = time.perf_counter()
         if feedback_raw:
-            fb_fields, feedback_model = extract_feedback_data(feedback_raw)
+            fb_fields, feedback_model, feedback_prompt_id = extract_feedback_data(feedback_raw)
             feedback_summary = fb_fields.get("feedback_summary")
             feedback_sections = fb_fields.get("feedback_sections")
         else:
             feedback_summary = None
             feedback_sections = None
             feedback_model = None  # no LLM call was made — nothing to attribute
+            feedback_prompt_id = None
         t_feedback = time.perf_counter() - t1
 
         print(
@@ -503,9 +467,7 @@ def _process_one_cv(
             "feedback_prompt_id": feedback_prompt_id,
         }
     except Exception as e:
-        print(
-            f"[error] resume_id={pid} failed and was skipped: {type(e).__name__}: {e}"
-        )
+        print(f"[error] resume_id={pid} failed and was skipped: {type(e).__name__}: {e}")
         return None
 
 
@@ -537,48 +499,34 @@ def build_cases(
     """
     grouped = _group_messages_by_cv(messages)
 
-    about_prompt_id = prompts_repo.get_or_create(
-        name="intro_extraction",
-        version=INTRO_PROMPT_VERSION,
-        system_text=INTRO_SYSTEM_PROMPT,
-        user_template=INTRO_USER_TEMPLATE,
-    )
-    feedback_prompt_id = prompts_repo.get_or_create(
-        name="feedback_extraction",
-        version=FEEDBACK_PROMPT_VERSION,
-        system_text=FEEDBACK_SYSTEM,
-        user_template=FEEDBACK_USER_TEMPLATE,
-    )
+    about_prompt = prompts_repo.get_latest("intro_extraction")
+    feedback_prompt = prompts_repo.get_latest("feedback_extraction")
+    if about_prompt is None or feedback_prompt is None:
+        raise RuntimeError(
+            "No prompts found in the DB. Run `python -m db.seed_prompts` once to seed "
+            "the initial versions, or create them via the prompt-editing web form / "
+            "POST /prompts/{intro_extraction,feedback_extraction}."
+        )
+    about_prompt_id = about_prompt.id
+    feedback_prompt_id = feedback_prompt.id
 
     todo = {}
     skipped = 0
     for pid, entry in grouped.items():
-        if _is_up_to_date(
-            str(pid), entry["feedback_raw"], about_prompt_id, feedback_prompt_id
-        ):
+        if _is_up_to_date(str(pid), entry["feedback_raw"], about_prompt_id, feedback_prompt_id):
             skipped += 1
             continue
         todo[pid] = entry
 
     if skipped:
-        print(
-            f"Skipping {skipped} already-processed CV(s) (same model/prompt/feedback)"
-        )
+        print(f"Skipping {skipped} already-processed CV(s) (same model/prompt/feedback)")
     if not todo:
         return []
 
     cases = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(
-                _process_one_cv,
-                pid,
-                entry["file"],
-                entry["feedback_raw"],
-                data_dir,
-                about_prompt_id,
-                feedback_prompt_id,
-            ): pid
+            pool.submit(_process_one_cv, pid, entry["file"], entry["feedback_raw"], data_dir): pid
             for pid, entry in todo.items()
         }
         for future in as_completed(futures):
@@ -589,9 +537,7 @@ def build_cases(
                 # _process_one_cv already catches its own errors internally
                 # and returns None — this is a defensive fallback in case
                 # something outside that try/except still blows up.
-                print(
-                    f"[error] resume_id={pid} raised unexpectedly and was skipped: {e}"
-                )
+                print(f"[error] resume_id={pid} raised unexpectedly and was skipped: {e}")
                 continue
 
             if case is None:
@@ -601,9 +547,7 @@ def build_cases(
                 try:
                     on_case_processed(case)
                 except Exception as e:
-                    print(
-                        f"[error] resume_id={pid}: on_case_processed callback failed: {e}"
-                    )
+                    print(f"[error] resume_id={pid}: on_case_processed callback failed: {e}")
 
             cases.append(case)
 
@@ -629,9 +573,7 @@ def _save_one_case(case: dict) -> bool:
     critique). Returns True if the case was saved.
     """
     if case.get("feedback_sections") is None:
-        print(
-            f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)"
-        )
+        print(f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)")
         return False
     resumes_repo.upsert(case)
     return True
@@ -650,9 +592,7 @@ def save_cases_to_db(cases: list[dict]) -> int:
     return saved
 
 
-def upload_file_via_api(
-    json_path: Path = INPUT_PATH, api_base_url: str = API_BASE_URL
-) -> dict:
+def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BASE_URL) -> dict:
     """
     Uploads result.json to the API's /resumes/upload endpoint as a file
     (multipart/form-data — the same way a web form's file picker would).
@@ -677,9 +617,7 @@ def upload_file_via_api(
             ) from e
 
     if response.status_code in (400, 422):
-        raise RuntimeError(
-            f"API rejected the upload ({response.status_code}): {response.json()}"
-        )
+        raise RuntimeError(f"API rejected the upload ({response.status_code}): {response.json()}")
     response.raise_for_status()
 
     result = response.json()
@@ -692,5 +630,5 @@ def upload_file_via_api(
 
 if __name__ == "__main__":
     # Pick ONE of these — not both:
-    upload_file_via_api()  # server does build_cases() + save
+    upload_file_via_api()                                                   # server does build_cases() + save
     # build_cases(load_messages(), on_case_processed=_save_one_case)        # write locally as each CV finishes, no API needed
