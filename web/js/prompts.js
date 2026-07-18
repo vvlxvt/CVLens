@@ -59,10 +59,12 @@
 
     const isLatest = panel.index === panel.versions.length - 1;
     const positionLabel = `${panel.index + 1}/${panel.versions.length}`;
-    const staleNote = isLatest ? "" : " · не последняя версия";
+    const badge = isLatest
+      ? '<span class="status-badge active"><i class="bi bi-check-circle-fill"></i> Активна при загрузке</span>'
+      : '<span class="status-badge archived"><i class="bi bi-archive"></i> Архив</span>';
 
-    el(panel.metaEl).textContent =
-      `id: ${p.id} · ${p.version} (${positionLabel}) · ${formatDate(p.created_at)}${staleNote}`;
+    el(panel.metaEl).innerHTML =
+      `${badge} <span>id: ${p.id} · ${p.version} (${positionLabel}) · ${formatDate(p.created_at)}</span>`;
     el(panel.systemEl).value = p.system_text;
     el(panel.userEl).value = p.user_template;
 

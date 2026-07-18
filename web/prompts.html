@@ -27,6 +27,27 @@
     font-size: 0.78rem;
     color: var(--text-muted);
     margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .status-badge{
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+  }
+  .status-badge.active{
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+  }
+  .status-badge.archived{
+    background: #F1F2F4;
+    color: var(--text-muted);
   }
   .prompt-col label{
     font-size: 0.78rem;
