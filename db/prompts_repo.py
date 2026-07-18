@@ -51,6 +51,20 @@ def get_latest(name: str) -> Optional[Prompt]:
         return prompt
 
 
+def list_all(name: str) -> list[Prompt]:
+    """All versions for `name`, oldest first — used by the prompt-editing
+    web form's prev/next version navigation."""
+    with get_session() as session:
+        rows = (
+            session.query(Prompt)
+            .filter(Prompt.name == name)
+            .order_by(Prompt.id.asc())
+            .all()
+        )
+        session.expunge_all()
+        return rows
+
+
 def create_next_version(name: str, system_text: str, user_template: str) -> Prompt:
     """
     Saves a new prompt version for `name`, auto-numbered as one past the
