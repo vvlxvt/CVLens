@@ -37,16 +37,22 @@ INPUT_PATH = DATA_DIR / "result.json"
 INTRO_PROMPT_VERSION = "v1"
 FEEDBACK_PROMPT_VERSION = "v1"
 
-# Model actually applied by generate_response() for the current LLM_PROVIDER.
-APPLIED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
-
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
+# What SHOULD be used if the preferred provider is healthy — used only to
+# detect staleness (see _is_up_to_date). The model actually recorded on
+# each DB row (about_llm/feedback_llm) always reflects what really ran for
+# that call, which can differ from this if generate_response() fell back
+# to Ollama mid-run. Comparing against the *preferred* model here means a
+# CV that fell back to Ollama last time will correctly get reprocessed
+# (and upgraded) once the preferred provider is healthy again.
+PREFERRED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
 
 ADMINS = {
     "Aleksandr Valuev",
     "Maksim Pozharskiy",
-    'Evgeny V',
-    'Polina (Полина🪷) Kornilova',
+    "Evgeny V",
+    "Polina (Полина🪷) Kornilova",
     "Artem K",
     "Anna [job offer USA \U0001f1fa\U0001f1f8] Naumova",
 }
@@ -307,7 +313,9 @@ def detect_section(line: str) -> str | None:
     return None
 
 
-def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR, about_prompt_id: int | None = None) -> dict:
+def parse_cv_sections(
+    file_url: str, data_dir: Path = DATA_DIR, about_prompt_id: int | None = None
+) -> dict:
     """
     Разбирает PDF на секции. Возвращает поля, готовые лечь в таблицу resumes:
         experience, skills, about_me_summary_raw,
@@ -373,7 +381,9 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR, about_prompt_id:
             system_text=INTRO_SYSTEM_PROMPT,
             user_template=INTRO_USER_TEMPLATE,
         )
-    fields = extract_intro_data(intro_text)  # {full_name, role_position, summary}
+    fields, about_model = extract_intro_data(
+        intro_text
+    )  # ({full_name, role_position, summary}, model)
 
     return {
         **parsed,
@@ -383,7 +393,7 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR, about_prompt_id:
         # если в CV уже была явная секция about/summary — оставляем её как есть,
         # LLM-саммари используем только как запасной вариант
         "about_summary": about_me_summary_raw or fields.get("summary"),
-        "about_llm": APPLIED_MODEL,
+        "about_llm": about_model,
         "about_prompt_id": about_prompt_id,
     }
 
@@ -428,16 +438,20 @@ def _group_messages_by_cv(messages: list[dict]) -> dict[int, dict]:
     return grouped
 
 
-def _is_up_to_date(resume_id: str, feedback_raw: str, about_prompt_id: int, feedback_prompt_id: int) -> bool:
-    """True if this CV is already in the DB with the current model/prompt
-    version and the same feedback text — safe to skip reprocessing."""
+def _is_up_to_date(
+    resume_id: str, feedback_raw: str, about_prompt_id: int, feedback_prompt_id: int
+) -> bool:
+    """True if this CV is already in the DB with the preferred model/prompt
+    version and the same feedback text — safe to skip reprocessing. A row
+    saved via an Ollama fallback will NOT count as up to date once the
+    preferred provider is healthy again, so it gets reprocessed/upgraded."""
     existing = resumes_repo.get_by_resume_id(resume_id)
     if existing is None:
         return False
     return (
-        existing.about_llm == APPLIED_MODEL
+        existing.about_llm == PREFERRED_MODEL
         and existing.about_prompt_id == about_prompt_id
-        and existing.feedback_llm == APPLIED_MODEL
+        and existing.feedback_llm == PREFERRED_MODEL
         and existing.feedback_prompt_id == feedback_prompt_id
         and (existing.feedback_raw or "") == feedback_raw
     )
@@ -452,39 +466,55 @@ def _process_one_cv(
     feedback_prompt_id: int,
 ) -> dict | None:
     """Runs PDF parsing + both LLM extractions for a single CV. Returns
-    a case dict ready for the DB, or None if parsing failed (non-English CV)."""
-    t0 = time.perf_counter()
-    sections = parse_cv_sections(file_url, data_dir, about_prompt_id=about_prompt_id)
-    t_pdf_and_intro = time.perf_counter() - t0
-    if sections.get("noeng"):
+    a case dict ready for the DB, or None if parsing failed (non-English CV)
+    or the whole CV couldn't be processed (logged, not raised — one bad CV
+    shouldn't take down the rest of the batch)."""
+    try:
+        t0 = time.perf_counter()
+        sections = parse_cv_sections(
+            file_url, data_dir, about_prompt_id=about_prompt_id
+        )
+        t_pdf_and_intro = time.perf_counter() - t0
+        if sections.get("noeng"):
+            return None
+
+        t1 = time.perf_counter()
+        if feedback_raw:
+            fb_fields, feedback_model = extract_feedback_data(feedback_raw)
+            feedback_summary = fb_fields.get("feedback_summary")
+            feedback_sections = fb_fields.get("feedback_sections")
+        else:
+            feedback_summary = None
+            feedback_sections = None
+            feedback_model = None  # no LLM call was made — nothing to attribute
+        t_feedback = time.perf_counter() - t1
+
+        print(
+            f"[timing] resume_id={pid} pdf+intro_llm={t_pdf_and_intro:.1f}s feedback_llm={t_feedback:.1f}s"
+        )
+
+        return {
+            "resume_id": str(pid),
+            **sections,
+            "feedback_raw": feedback_raw,
+            "feedback_summary": feedback_summary,
+            "feedback_sections": feedback_sections,
+            "feedback_llm": feedback_model,
+            "feedback_prompt_id": feedback_prompt_id,
+        }
+    except Exception as e:
+        print(
+            f"[error] resume_id={pid} failed and was skipped: {type(e).__name__}: {e}"
+        )
         return None
 
-    t1 = time.perf_counter()
-    if feedback_raw:
-        fb_fields = extract_feedback_data(feedback_raw)
-        feedback_summary = fb_fields.get("feedback_summary")
-        feedback_sections = fb_fields.get("feedback_sections")
-    else:
-        feedback_summary = None
-        feedback_sections = None
-    t_feedback = time.perf_counter() - t1
 
-    print(
-        f"[timing] resume_id={pid} pdf+intro_llm={t_pdf_and_intro:.1f}s feedback_llm={t_feedback:.1f}s"
-    )
-
-    return {
-        "resume_id": str(pid),
-        **sections,
-        "feedback_raw": feedback_raw,
-        "feedback_summary": feedback_summary,
-        "feedback_sections": feedback_sections,
-        "feedback_llm": APPLIED_MODEL,
-        "feedback_prompt_id": feedback_prompt_id,
-    }
-
-
-def build_cases(messages: list[dict], data_dir: Path = DATA_DIR, max_workers: int = MAX_WORKERS) -> list[dict]:
+def build_cases(
+    messages: list[dict],
+    data_dir: Path = DATA_DIR,
+    max_workers: int = MAX_WORKERS,
+    on_case_processed=None,
+) -> list[dict]:
     """
     Строит кейсы: одно CV + склеенный фидбэк от одного или нескольких админов,
     прогоняет фидбэк через LLM-экстракцию (feedback_summary/feedback_sections).
@@ -493,6 +523,15 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR, max_workers: in
     текстом фидбэка, пропускаются без обращения к LLM. Обработка новых/
     изменившихся CV идёт параллельно (LLM-вызовы — это ожидание сети/
     инференса, поэтому потоки, а не процессы, дают выигрыш).
+
+    on_case_processed: если передан, вызывается СРАЗУ по готовности каждого
+    CV (например, чтобы сохранить его в БД немедленно) — до того, как
+    обработка остальных CV в этой пачке завершится. Это значит, что даже
+    если позже в этом же прогоне что-то фатально сломается (кончились
+    токены и у облака, и локальная модель недоступна; процесс прибили;
+    и т.п.), все уже обработанные к этому моменту CV не теряются — они
+    уже сохранены. Повторный запуск подхватит только необработанные/
+    непрошедшие через _is_up_to_date CV, не трогая то, что уже готово.
 
     Структура кейса соответствует колонкам таблицы resumes.
     """
@@ -514,13 +553,17 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR, max_workers: in
     todo = {}
     skipped = 0
     for pid, entry in grouped.items():
-        if _is_up_to_date(str(pid), entry["feedback_raw"], about_prompt_id, feedback_prompt_id):
+        if _is_up_to_date(
+            str(pid), entry["feedback_raw"], about_prompt_id, feedback_prompt_id
+        ):
             skipped += 1
             continue
         todo[pid] = entry
 
     if skipped:
-        print(f"Skipping {skipped} already-processed CV(s) (same model/prompt/feedback)")
+        print(
+            f"Skipping {skipped} already-processed CV(s) (same model/prompt/feedback)"
+        )
     if not todo:
         return []
 
@@ -539,9 +582,30 @@ def build_cases(messages: list[dict], data_dir: Path = DATA_DIR, max_workers: in
             for pid, entry in todo.items()
         }
         for future in as_completed(futures):
-            case = future.result()
-            if case is not None:
-                cases.append(case)
+            pid = futures[future]
+            try:
+                case = future.result()
+            except Exception as e:
+                # _process_one_cv already catches its own errors internally
+                # and returns None — this is a defensive fallback in case
+                # something outside that try/except still blows up.
+                print(
+                    f"[error] resume_id={pid} raised unexpectedly and was skipped: {e}"
+                )
+                continue
+
+            if case is None:
+                continue
+
+            if on_case_processed is not None:
+                try:
+                    on_case_processed(case)
+                except Exception as e:
+                    print(
+                        f"[error] resume_id={pid}: on_case_processed callback failed: {e}"
+                    )
+
+            cases.append(case)
 
     return cases
 
@@ -557,30 +621,38 @@ def load_messages(path: Path = INPUT_PATH) -> list[dict]:
         return json.load(f)["messages"]
 
 
+def _save_one_case(case: dict) -> bool:
+    """
+    Upserts one case into the resumes table, skipping it if the feedback
+    couldn't be tied to any concrete CV section (feedback_sections is None
+    — e.g. empty feedback, an off-topic question, or a link with no real
+    critique). Returns True if the case was saved.
+    """
+    if case.get("feedback_sections") is None:
+        print(
+            f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)"
+        )
+        return False
+    resumes_repo.upsert(case)
+    return True
+
+
 def save_cases_to_db(cases: list[dict]) -> int:
     """
-    Upserts each case into the resumes table, skipping cases whose feedback
-    couldn't be tied to any concrete CV section (feedback_sections is None —
-    e.g. empty feedback, an off-topic question, or a link with no real
-    critique). Returns the number of rows actually saved.
+    Bulk-saves an already-built list of cases. Prefer passing
+    _save_one_case directly as build_cases()'s on_case_processed callback
+    instead — that saves each CV the moment it's ready instead of waiting
+    for the whole batch, so a later failure (e.g. every LLM provider
+    becomes unavailable) doesn't lose CVs that were already processed.
     """
-    saved = 0
-    skipped = 0
-
-    for case in cases:
-        if case.get("feedback_sections") is None:
-            skipped += 1
-            print(f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)")
-            continue
-
-        resumes_repo.upsert(case)
-        saved += 1
-
-    print(f"Skipped {skipped} case(s) with unclear/no feedback")
+    saved = sum(_save_one_case(c) for c in cases)
+    print(f"Skipped {len(cases) - saved} case(s) with unclear/no feedback")
     return saved
 
 
-def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BASE_URL) -> dict:
+def upload_file_via_api(
+    json_path: Path = INPUT_PATH, api_base_url: str = API_BASE_URL
+) -> dict:
     """
     Uploads result.json to the API's /resumes/upload endpoint as a file
     (multipart/form-data — the same way a web form's file picker would).
@@ -605,7 +677,9 @@ def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BA
             ) from e
 
     if response.status_code in (400, 422):
-        raise RuntimeError(f"API rejected the upload ({response.status_code}): {response.json()}")
+        raise RuntimeError(
+            f"API rejected the upload ({response.status_code}): {response.json()}"
+        )
     response.raise_for_status()
 
     result = response.json()
@@ -618,5 +692,5 @@ def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BA
 
 if __name__ == "__main__":
     # Pick ONE of these — not both:
-    upload_file_via_api()                                    # server does build_cases() + save
-    # save_cases_to_db(build_cases(load_messages()))          # process + write locally, no API needed
+    upload_file_via_api()  # server does build_cases() + save
+    # build_cases(load_messages(), on_case_processed=_save_one_case)        # write locally as each CV finishes, no API needed

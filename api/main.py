@@ -56,6 +56,12 @@ async def upload_resumes(file: UploadFile = File(...)):
     CVs with no clear feedback (feedback_sections is null) are parsed but
     not saved — their resume_ids come back in skipped_ids.
 
+    Each CV is saved to the DB the moment it's processed (not batched until
+    the whole export finishes) — if the run fails partway through (e.g. the
+    LLM provider runs out of tokens and no fallback is configured), whatever
+    was already processed is still safely in the DB. Re-uploading the same
+    file afterwards only reprocesses what's missing/changed.
+
     Note: this runs the full LLM pipeline synchronously, so a large export
     can take a while to respond — set a generous client-side timeout.
     """
@@ -73,16 +79,17 @@ async def upload_resumes(file: UploadFile = File(...)):
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors())
 
-    cases = build_cases(export.messages)
-
     saved_ids = []
     skipped_ids = []
-    for case in cases:
+
+    def _on_case_processed(case: dict):
         if case.get("feedback_sections") is None:
             skipped_ids.append(case["resume_id"])
-            continue
+            return
         resumes_repo.upsert(case)
         saved_ids.append(case["resume_id"])
+
+    cases = build_cases(export.messages, on_case_processed=_on_case_processed)
 
     return UploadResult(
         received=len(cases),
