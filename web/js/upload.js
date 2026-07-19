@@ -12,9 +12,23 @@
   const errorPanel = el("errorPanel");
   const resultBlock = el("resultBlock");
 
+  function selectedPdfFiles() {
+    return Array.from(pdfInput.files).filter((f) =>
+      f.name.toLowerCase().endsWith(".pdf"),
+    );
+  }
+
   pdfInput.addEventListener("change", () => {
-    const n = pdfInput.files.length;
-    el("pdfCount").textContent = n > 0 ? `Выбрано файлов: ${n}` : "";
+    const total = pdfInput.files.length;
+    const pdfCount = selectedPdfFiles().length;
+    if (total === 0) {
+      el("pdfCount").textContent = "";
+    } else if (pdfCount === total) {
+      el("pdfCount").textContent = `Найдено PDF: ${pdfCount}`;
+    } else {
+      el("pdfCount").textContent =
+        `Найдено PDF: ${pdfCount} (остальные ${total - pdfCount} файлов в папке пропущены)`;
+    }
   });
 
   function showResult(result) {
@@ -51,7 +65,7 @@
 
     const formData = new FormData();
     formData.append("file", jsonFile);
-    for (const pdf of pdfInput.files) {
+    for (const pdf of selectedPdfFiles()) {
       formData.append("pdf_files", pdf);
     }
 
