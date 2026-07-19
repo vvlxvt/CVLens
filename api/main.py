@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
@@ -6,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from db import resumes_repo, prompts_repo
-from extract.parser import build_cases
+from extract.parser import build_cases, DATA_DIR
 from api.schemas import (
     TelegramExportIn,
     ResumeCard,
@@ -46,14 +47,29 @@ def health():
 
 
 @app.post("/resumes/upload", response_model=UploadResult)
-async def upload_resumes(file: UploadFile = File(...)):
+async def upload_resumes(
+    file: UploadFile = File(
+        ..., description="result.json — Telegram's chat export, unmodified"
+    ),
+    pdf_files: list[UploadFile] = File(
+        default=[],
+        description="CV PDFs referenced by result.json's messages (optional)",
+    ),
+):
     """
     Accepts result.json uploaded as a file (multipart/form-data, field name
-    "file") — the exact file Telegram's chat export produces, unmodified.
-    Does the full pipeline server-side: parses any CV PDFs the messages
-    reference (these must already exist under extract/data/, same as
-    running parser.py from the CLI), runs the LLM intro/feedback
-    extraction, and upserts the results into the DB.
+    "file") — the exact file Telegram's chat export produces, unmodified —
+    plus, optionally, the CV PDFs it references (field name "pdf_files",
+    repeatable). Uploaded PDFs are saved under extract/data/ using just
+    their filename (any directory component in the upload is stripped).
+
+    If a PDF a message references isn't among pdf_files, the pipeline falls
+    back to whatever's already on disk under extract/data/ — so re-uploading
+    just result.json (no PDFs) still works as before, as long as the files
+    are already there from an earlier upload or a direct server-side copy.
+
+    Does the full pipeline server-side: parses the CV PDFs, runs the LLM
+    intro/feedback extraction, and upserts the results into the DB.
 
     CVs with no clear feedback (feedback_sections is null) are parsed but
     not saved — their resume_ids come back in skipped_ids.
@@ -72,12 +88,28 @@ async def upload_resumes(file: UploadFile = File(...)):
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"'{file.filename}' is not valid JSON: {e}")
+        raise HTTPException(
+            status_code=400, detail=f"'{file.filename}' is not valid JSON: {e}"
+        )
 
     try:
         export = TelegramExportIn(**data)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors())
+
+    saved_pdf_names = []
+    skipped_pdf_names = []
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    for pdf in pdf_files:
+        # Strip any directory component the browser/client sent — never
+        # trust a client-supplied path (path traversal, e.g. "../../etc/x").
+        safe_name = Path(pdf.filename).name
+        if not safe_name.lower().endswith(".pdf"):
+            skipped_pdf_names.append(pdf.filename)
+            continue
+        content = await pdf.read()
+        (DATA_DIR / safe_name).write_bytes(content)
+        saved_pdf_names.append(safe_name)
 
     saved_ids = []
     skipped_ids = []
@@ -96,6 +128,8 @@ async def upload_resumes(file: UploadFile = File(...)):
         saved=len(saved_ids),
         saved_ids=saved_ids,
         skipped_ids=skipped_ids,
+        saved_pdf_files=saved_pdf_names,
+        skipped_pdf_files=skipped_pdf_names,
     )
 
 
@@ -110,7 +144,8 @@ def list_resumes(
     limit: int = Query(50, ge=1, le=500),
     llm: Optional[str] = Query(None, description="Filter by about_llm or feedback_llm"),
     has_feedback: Optional[bool] = Query(
-        None, description="true: only resumes with feedback_sections set; false: only without"
+        None,
+        description="true: only resumes with feedback_sections set; false: only without",
     ),
     section: Optional[str] = Query(
         None, description="Only resumes whose feedback_sections contains this value"

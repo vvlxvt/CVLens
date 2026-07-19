@@ -73,13 +73,20 @@
 <body>
 
 <header class="app-header py-3 mb-4">
-  <div class="container-xl d-flex align-items-center justify-content-between">
-    <span class="brand"><i class="bi bi-search"></i> CVLens</span>
-    <a href="index.html" class="btn btn-outline-secondary btn-sm">
-      <i class="bi bi-arrow-left"></i> К списку CV
-    </a>
-  </div>
-</header>
+      <div
+        class="container-xl d-flex align-items-center justify-content-between"
+      >
+        <span class="brand"><i class="bi bi-search"></i> CVLens</span>
+        <div class="d-flex align-items-center gap-3">
+          <a href="upload.html" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-sliders"></i> To upload CVs
+          </a>
+          <a href="index.html" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> К списку CV
+          </a>
+        </div>
+      </div>
+    </header>
 
 <main class="container-xl pb-5">
   <h4 class="mb-4">Промпты для LLM-обработки</h4>
