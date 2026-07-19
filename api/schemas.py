@@ -73,6 +73,8 @@ class UploadResult(BaseModel):
     saved: int
     saved_ids: list[str]
     skipped_ids: list[str]  # parsed OK, but no clear feedback (feedback_sections is null)
+    saved_pdf_files: list[str] = []  # uploaded PDFs written to extract/data/
+    skipped_pdf_files: list[str] = []  # uploaded files that weren't .pdf
 
 
 class DeleteResult(BaseModel):
