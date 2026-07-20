@@ -2,8 +2,10 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from db import resumes_repo, prompts_repo
@@ -35,10 +37,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Setup templates and static files
+BASE_DIR = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "web"))
+app.mount(
+    "/static/css",
+    StaticFiles(directory=str(BASE_DIR / "web" / "css")),
+    name="static_css",
+)
+app.mount(
+    "/static/js", StaticFiles(directory=str(BASE_DIR / "web" / "js")), name="static_js"
+)
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Web UI Routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/")
+def serve_index(request: Request):
+    """Serve the main CV listing page."""
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"request": request},
+    )
+
+
+@app.get("/upload")
+def serve_upload(request: Request):
+    """Serve the upload page."""
+    return templates.TemplateResponse(
+        request=request,
+        name="upload.html",
+        context={"request": request},
+    )
+
+
+@app.get("/prompts")
+def serve_prompts(request: Request):
+    """Serve the prompts management page."""
+    return templates.TemplateResponse(
+            request=request,
+            name="prompts.html",
+            context={"request": request},
+        )
 
 
 # ---------------------------------------------------------------------------

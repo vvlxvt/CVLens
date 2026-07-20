@@ -1,6 +1,6 @@
 (() => {
   const params = new URLSearchParams(location.search);
-  const API_BASE_URL = params.get("api") || "http://127.0.0.1:8000";
+  const API_BASE_URL = params.get("api") || "";
 
   const el = (id) => document.getElementById(id);
 
