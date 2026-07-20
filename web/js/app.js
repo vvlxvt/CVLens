@@ -1,7 +1,7 @@
 (() => {
   // Override with ?api=http://host:port if needed during dev (kept across navigation).
   const initialParams = new URLSearchParams(location.search);
-  const API_BASE_URL = initialParams.get("api") || "http://127.0.0.1:8000";
+  const API_BASE_URL = initialParams.get("api") || "";
 
   const listState = { skip: 0, limit: 12, total: 0 };
 

@@ -18,7 +18,7 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
       rel="stylesheet"
     />
-    <link href="css/styles.css" rel="stylesheet" />
+    <link href="/static/css/styles.css" rel="stylesheet" />
     {% block extra_css %}{% endblock %}
   </head>
   <body>
@@ -29,13 +29,13 @@
         <span class="brand"><i class="bi bi-search"></i> CVLens</span>
         <div class="d-flex align-items-center gap-3">
           {% block header_extra %}{% endblock %}
-          <a href="prompts.html" class="btn btn-outline-secondary btn-sm">
+          <a href="/prompts" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-sliders"></i> Промпты
           </a>
-          <a href="upload.html" class="btn btn-outline-secondary btn-sm">
+          <a href="/upload" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-upload"></i> Загрузить
           </a>
-          <a href="index.html" class="btn btn-outline-secondary btn-sm">
+          <a href="/" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-list"></i> Список CV
           </a>
         </div>
@@ -43,7 +43,9 @@
     </header>
 
     <main class="container-xl pb-5">
-      {% block content %}{% endblock %}
+      {% block index %}{% endblock %}
+      {% block upload %}{% endblock %}
+      {% block prompts %}{% endblock %}
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
