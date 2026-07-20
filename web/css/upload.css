@@ -1,0 +1,55 @@
+.upload-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  padding: 1.5rem;
+  max-width: 720px;
+}
+
+.upload-panel .form-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.upload-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.file-count-badge {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+}
+
+.result-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 1rem 1.1rem;
+  margin-top: 1.25rem;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.3rem 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 0.88rem;
+}
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+.result-row .v {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-weight: 600;
+}
+
+.id-list {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  word-break: break-word;
+}
