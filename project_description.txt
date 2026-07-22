@@ -1,0 +1,26 @@
+CVLens - AI-Powered Resume Analysis System
+
+CVLens is an intelligent system that extracts structured data from PDF resumes, pairs them with expert feedback from Telegram chat exports, and enables semantic similarity search to find historically reviewed candidates that resemble new applicants.
+
+The system processes PDF resumes by extracting text and automatically identifying key sections such as skills, work experience, and professional summaries. Using LLM models (Ollama, OpenAI, or Groq), it extracts structured fields like candidate name, desired role, and generates concise summaries. Recruiters can provide feedback through Telegram, and CVLens automatically pairs this feedback with specific resumes by analyzing reply chains in chat exports. All extracted data is stored in a SQLite database with full version tracking for both resumes and extraction prompts.
+
+When reviewing new candidates, recruiters can upload a PDF and the system performs semantic similarity search using vector embeddings to find the most similar historically reviewed profiles. The search uses field-weighted embeddings, prioritizing role position and skills over other sections. A web interface provides easy access to upload resumes, browse the database, and manage extraction prompts. The entire system is backed by a REST API built with FastAPI, enabling programmatic access to all functionality.
+
+Key Features:
+- PDF parsing with automatic text extraction and section detection (skills, experience, summary)
+- LLM-powered extraction of key resume fields (full name, role position, summary) using Ollama or OpenAI/Groq
+- Automatic pairing of recruiter feedback with specific resumes from Telegram exports
+- Vector-based semantic search with field-weighted embeddings to find similar candidate profiles
+- SQLite database with SQLAlchemy for persistent storage and version tracking
+- REST API (FastAPI) for CRUD operations on resumes and prompt management
+- Web UI for uploading, viewing, and managing resumes
+- Prompt versioning system to track and manage different extraction prompt versions
+
+Technologies:
+- Python 3.10+, FastAPI, SQLAlchemy, Alembic
+- Qdrant vector database for semantic search
+- Sentence Transformers (intfloat/multilingual-e5-base) for embeddings
+- PyMuPDF for PDF parsing
+- Ollama / OpenAI / Groq for LLM inference
+- SQLite for data persistence
+- HTML/JavaScript for web interface
