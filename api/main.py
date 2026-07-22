@@ -1,13 +1,15 @@
 import json
+import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
+import vector_search
 from db import resumes_repo, prompts_repo
 from extract.parser import build_cases, DATA_DIR
 from api.schemas import (
@@ -19,6 +21,10 @@ from api.schemas import (
     PaginatedResumeCards,
     PromptOut,
     PromptCreateIn,
+    ParsedCVOut,
+    SearchMatchOut,
+    SearchResponse,
+    ReindexResult,
 )
 
 app = FastAPI(
@@ -84,10 +90,20 @@ def serve_upload(request: Request):
 def serve_prompts(request: Request):
     """Serve the prompts management page."""
     return templates.TemplateResponse(
-            request=request,
-            name="prompts.html",
-            context={"request": request},
-        )
+        request=request,
+        name="prompts.html",
+        context={"request": request},
+    )
+
+
+@app.get("/search")
+def serve_search(request: Request):
+    """Serve the vector similarity search page."""
+    return templates.TemplateResponse(
+        request=request,
+        name="search.html",
+        context={"request": request},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +196,90 @@ async def upload_resumes(
         saved_pdf_files=saved_pdf_names,
         skipped_pdf_files=skipped_pdf_names,
     )
+
+
+def _match_from_point(point) -> SearchMatchOut:
+    """Builds a search result card directly from a Qdrant point — the
+    payload already carries everything needed for display (role, skills,
+    feedback, llm), written at reindex time. Note this can be slightly
+    stale relative to the live DB if a resume changed since the last
+    reindex; hit "Reindex" to refresh."""
+    payload = point.payload or {}
+    return SearchMatchOut(
+        resume_id=str(payload.get("case_id", point.id)),
+        score=point.score,
+        role_position=payload.get("role") or "",
+        skills=payload.get("skills") or "",
+        about_me_summary=payload.get("summary") or "",
+        experience=payload.get("experience") or "",
+        feedback_summary=payload.get("feedback_summary") or "",
+        feedback_sections=payload.get("feedback_sections") or [],
+        llm=payload.get("llm") or "",
+    )
+
+
+@app.post("/resumes/search", response_model=SearchResponse)
+async def search_resumes(
+    file: UploadFile = File(
+        ...,
+        description="Query CV (PDF) to find similar historically-reviewed candidates for",
+    ),
+    limit: int = Form(
+        6,
+        description="Total number of matches to return (top match + up to limit-1 others)",
+    ),
+    skills: str = Form(
+        "",
+        description='Comma-separated skills that must ALL be present, e.g. "python,django"',
+    ),
+):
+    """
+    Parses the uploaded CV (no DB write — it's a live query, not saved),
+    embeds it, and finds the most similar historically-reviewed resumes
+    in Qdrant. The single best match comes back as top_match (with its
+    feedback); any further matches (up to limit-1, capped at 5 for display)
+    come back as other_matches.
+
+    Equivalent to the old CLI's `python vector_search.py --pdf ... --limit ... --skills ...`.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400, detail=f"'{file.filename}' must be a .pdf file"
+        )
+
+    content = await file.read()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / file.filename
+        tmp_path.write_bytes(content)
+        try:
+            query_case = vector_search.parse_query_cv(tmp_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    skills_list = [s.strip() for s in skills.split(",") if s.strip()] or None
+    points = vector_search.search_similar(query_case, limit=limit, skills=skills_list)
+
+    matches = [_match_from_point(p) for p in points]
+    top_match = matches[0] if matches else None
+    other_matches = matches[1:6]  # up to 5 more, shown as cards below
+
+    return SearchResponse(
+        parsed_cv=ParsedCVOut(**query_case),
+        top_match=top_match,
+        other_matches=other_matches,
+    )
+
+
+@app.post("/resumes/reindex", response_model=ReindexResult)
+def reindex_resumes():
+    """
+    Recreates the Qdrant collection from scratch using the current DB
+    contents — equivalent to the old CLI's `python vector_search.py --reindex`.
+    Blocking and can take a while (re-embeds every resume); call this after
+    a batch of new uploads, not on every search.
+    """
+    count = vector_search.reindex_all()
+    return ReindexResult(indexed=count)
 
 
 # ---------------------------------------------------------------------------

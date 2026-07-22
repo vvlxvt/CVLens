@@ -72,7 +72,9 @@ class UploadResult(BaseModel):
     received: int
     saved: int
     saved_ids: list[str]
-    skipped_ids: list[str]  # parsed OK, but no clear feedback (feedback_sections is null)
+    skipped_ids: list[
+        str
+    ]  # parsed OK, but no clear feedback (feedback_sections is null)
     saved_pdf_files: list[str] = []  # uploaded PDFs written to extract/data/
     skipped_pdf_files: list[str] = []  # uploaded files that weren't .pdf
 
@@ -91,7 +93,9 @@ class ResumeCard(BaseModel):
     role_position: Optional[str] = None
     feedback_summary: Optional[str] = None
     feedback_sections: Optional[list[str]] = None
-    llm: Optional[str] = None  # the model that produced feedback_summary/feedback_sections
+    llm: Optional[str] = (
+        None  # the model that produced feedback_summary/feedback_sections
+    )
 
 
 class PaginatedResumeCards(BaseModel):
@@ -115,3 +119,38 @@ class PromptOut(BaseModel):
 class PromptCreateIn(BaseModel):
     system_text: str = Field(min_length=1)
     user_template: str = Field(min_length=1)
+
+
+class ParsedCVOut(BaseModel):
+    """The uploaded query CV's parsed sections — no feedback fields, since
+    this is a brand-new candidate that hasn't been reviewed yet."""
+
+    full_name: Optional[str] = None
+    role_position: str = ""
+    skills: str = ""
+    about_me_summary: str = ""
+    experience: str = ""
+
+
+class SearchMatchOut(BaseModel):
+    """One historically-reviewed resume found via vector similarity search."""
+
+    resume_id: str
+    score: float
+    role_position: str = ""
+    skills: str = ""
+    about_me_summary: str = ""
+    experience: str = ""
+    feedback_summary: str = ""
+    feedback_sections: list[str] = []
+    llm: str = ""
+
+
+class SearchResponse(BaseModel):
+    parsed_cv: ParsedCVOut
+    top_match: Optional[SearchMatchOut] = None
+    other_matches: list[SearchMatchOut] = []
+
+
+class ReindexResult(BaseModel):
+    indexed: int
