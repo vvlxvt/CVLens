@@ -142,6 +142,7 @@ class SearchMatchOut(BaseModel):
     about_me_summary: str = ""
     experience: str = ""
     feedback_summary: str = ""
+    feedback_raw: str = ""
     feedback_sections: list[str] = []
     llm: str = ""
 

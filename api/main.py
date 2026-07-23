@@ -199,22 +199,21 @@ async def upload_resumes(
 
 
 def _match_from_point(point) -> SearchMatchOut:
-    """Builds a search result card directly from a Qdrant point — the
-    payload already carries everything needed for display (role, skills,
-    feedback, llm), written at reindex time. Note this can be slightly
-    stale relative to the live DB if a resume changed since the last
-    reindex; hit "Reindex" to refresh."""
     payload = point.payload or {}
+
+    resume = resumes_repo.get_by_resume_id(str(payload["case_id"]))
+
     return SearchMatchOut(
-        resume_id=str(payload.get("case_id", point.id)),
+        resume_id=resume.resume_id,
         score=point.score,
-        role_position=payload.get("role") or "",
-        skills=payload.get("skills") or "",
-        about_me_summary=payload.get("summary") or "",
-        experience=payload.get("experience") or "",
-        feedback_summary=payload.get("feedback_summary") or "",
-        feedback_sections=payload.get("feedback_sections") or [],
-        llm=payload.get("llm") or "",
+        role_position=resume.role_position,
+        skills=resume.skills,
+        about_me_summary=resume.about_summary or resume.about_me_summary_raw,
+        experience=resume.experience,
+        feedback_raw=resume.feedback_raw,                      # полный текст
+        feedback_summary=resume.feedback_summary,
+        feedback_sections=resume.feedback_sections,
+        llm=resume.feedback_llm,
     )
 
 

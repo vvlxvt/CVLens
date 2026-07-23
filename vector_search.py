@@ -170,9 +170,9 @@ def reindex_all() -> int:
             "skills": case["skills"],
             "summary": case["about_me_summary"],
             "experience": case["experience"],
-            "feedback_summary": case["feedback_summary"],
-            "feedback_sections": case["feedback_sections"],
-            "llm": case["llm"],
+            # "feedback_summary": case["feedback_summary"],
+            # "feedback_sections": case["feedback_sections"],
+            # "llm": case["llm"],
         }
         points.append(PointStruct(id=point_id, vector=vector, payload=payload))
 
