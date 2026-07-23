@@ -18,6 +18,17 @@ extra_css %}
     font-size: 0.85rem;
     min-height: 1.4em;
   }
+  .other-match {
+    cursor: pointer;
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .other-match:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+  }
 </style>
 {% endblock %} {% block search %}
 <div class="toolbar p-3 mb-3">

@@ -15,6 +15,8 @@
   const emptyPanel = el("emptyPanel");
   const resultsBlock = el("resultsBlock");
 
+  let currentResults = null;
+
   function escapeHtml(str) {
     const div = document.createElement("div");
     div.textContent = str ?? "";
@@ -87,9 +89,9 @@
       parsed.full_name || parsed.role_position || "Резюме без названия";
     el("parsedList").innerHTML = [
       listItem("Роль", parsed.role_position),
-      listItem("О себе", parsed.about_me_summary),
+      listItem("О себе", parsed.about_me_summary, { mono: true }),
       listItem("Навыки", parsed.skills),
-      listItem("Опыт", parsed.experience),
+      listItem("Опыт", parsed.experience, { mono: true }),
     ].join("");
   }
 
@@ -105,23 +107,33 @@
     el("topMatchCandidateList").innerHTML = [
       listItem("О себе", match.about_me_summary),
       listItem("Навыки", match.skills),
-      listItem("Опыт", match.experience),
+      listItem("Опыт", match.experience, { mono: true }),
     ].join("");
 
     el("topMatchFeedbackList").innerHTML = [
       listItem("Саммари (LLM)", match.feedback_summary),
+      listItem("Полный фидбэк", match.feedback_raw, { mono: true }),
       listItem("Модель", match.llm, { mono: true }),
     ].join("");
   }
 
-  function otherMatchCard(match) {
+  function selectMatch(index) {
+    const previousTop = currentResults.top_match;
+
+    currentResults.top_match = currentResults.other_matches[index];
+    currentResults.other_matches[index] = previousTop;
+
+    renderResults(currentResults);
+  }
+
+  function otherMatchCard(match, index) {
     const hasFeedback = !!match.feedback_summary;
     const excerpt = hasFeedback
       ? escapeHtml(match.feedback_summary)
       : "Фидбэк ещё не обработан или неинформативен";
     return `
       <div class="col">
-        <div class="cv-card card p-3">
+        <div class="cv-card card p-3 other-match" data-index="${index}">
           <div class="d-flex justify-content-between align-items-start mb-2">
             <div class="card-title mb-0">${escapeHtml(match.role_position) || "Роль не указана"}</div>
             <span class="score-badge">${scorePercent(match.score)}</span>
@@ -144,7 +156,16 @@
     }
 
     const grid = el("otherMatchesGrid");
-    grid.innerHTML = (data.other_matches || []).map(otherMatchCard).join("");
+
+    grid.innerHTML = (data.other_matches || [])
+      .map((match, index) => otherMatchCard(match, index))
+      .join("");
+
+    grid.querySelectorAll(".other-match").forEach((card) => {
+      card.addEventListener("click", () => {
+        selectMatch(Number(card.dataset.index));
+      });
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -178,13 +199,14 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
+      currentResults = data;
 
       if (!data.top_match) {
         setPanels({ empty: true });
         return;
       }
 
-      renderResults(data);
+      renderResults(currentResults);
       setPanels({ results: true });
     } catch (err) {
       console.error(err);
