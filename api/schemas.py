@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -15,22 +14,22 @@ class ResumeIn(BaseModel):
 
     resume_id: str
 
-    experience: Optional[str] = None
-    skills: Optional[str] = None
-    about_me_summary_raw: Optional[str] = None
-    role_position_raw: Optional[str] = None
+    experience: str | None = None
+    skills: str | None = None
+    about_me_summary_raw: str | None = None
+    role_position_raw: str | None = None
 
-    full_name: Optional[str] = None
-    role_position: Optional[str] = None
-    about_summary: Optional[str] = None
-    about_llm: Optional[str] = None
-    about_prompt_id: Optional[int] = None
+    full_name: str | None = None
+    role_position: str | None = None
+    about_summary: str | None = None
+    about_llm: str | None = None
+    about_prompt_id: int | None = None
 
-    feedback_raw: Optional[str] = None
-    feedback_summary: Optional[str] = None
-    feedback_sections: Optional[list[str]] = None
-    feedback_llm: Optional[str] = None
-    feedback_prompt_id: Optional[int] = None
+    feedback_raw: str | None = None
+    feedback_summary: str | None = None
+    feedback_sections: list[str] | None = None
+    feedback_llm: str | None = None
+    feedback_prompt_id: int | None = None
 
     @field_validator("feedback_sections")
     @classmethod
@@ -75,8 +74,8 @@ class UploadResult(BaseModel):
     skipped_ids: list[
         str
     ]  # parsed OK, but no clear feedback (feedback_sections is null)
-    saved_pdf_files: list[str] = []  # uploaded PDFs written to extract/data/
-    skipped_pdf_files: list[str] = []  # uploaded files that weren't .pdf
+    saved_pdf_files: list[str] = Field(default_factory=list)
+    skipped_pdf_files: list[str] = Field(default_factory=list)
 
 
 class DeleteResult(BaseModel):
@@ -90,12 +89,10 @@ class ResumeCard(BaseModel):
     (ResumeOut, all DB fields)."""
 
     resume_id: str
-    role_position: Optional[str] = None
-    feedback_summary: Optional[str] = None
-    feedback_sections: Optional[list[str]] = None
-    llm: Optional[str] = (
-        None  # the model that produced feedback_summary/feedback_sections
-    )
+    role_position: str | None = None
+    feedback_summary: str | None = None
+    feedback_sections: list[str] | None = None
+    llm: str | None = None
 
 
 class PaginatedResumeCards(BaseModel):
@@ -125,7 +122,7 @@ class ParsedCVOut(BaseModel):
     """The uploaded query CV's parsed sections — no feedback fields, since
     this is a brand-new candidate that hasn't been reviewed yet."""
 
-    full_name: Optional[str] = None
+    full_name: str | None = None
     role_position: str = ""
     skills: str = ""
     about_me_summary: str = ""
@@ -137,20 +134,20 @@ class SearchMatchOut(BaseModel):
 
     resume_id: str
     score: float
-    role_position: str = ""
+    role_position: str | None = None
     skills: str = ""
     about_me_summary: str = ""
     experience: str = ""
     feedback_summary: str = ""
     feedback_raw: str = ""
-    feedback_sections: list[str] = []
+    feedback_sections: list[str] = Field(default_factory=list)
     llm: str = ""
 
 
 class SearchResponse(BaseModel):
     parsed_cv: ParsedCVOut
-    top_match: Optional[SearchMatchOut] = None
-    other_matches: list[SearchMatchOut] = []
+    top_match: SearchMatchOut | None = None
+    other_matches: list[SearchMatchOut] = Field(default_factory=list)
 
 
 class ReindexResult(BaseModel):

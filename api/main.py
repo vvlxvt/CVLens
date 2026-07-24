@@ -1,31 +1,31 @@
 import json
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 import vector_search
-from db import resumes_repo, prompts_repo
-from extract.parser import build_cases, DATA_DIR
 from api.schemas import (
-    TelegramExportIn,
-    ResumeCard,
-    ResumeOut,
-    UploadResult,
     DeleteResult,
     PaginatedResumeCards,
-    PromptOut,
-    PromptCreateIn,
     ParsedCVOut,
+    PromptCreateIn,
+    PromptOut,
+    ReindexResult,
+    ResumeCard,
+    ResumeOut,
     SearchMatchOut,
     SearchResponse,
-    ReindexResult,
+    TelegramExportIn,
+    UploadResult,
 )
+from db import prompts_repo, resumes_repo
+from extract.parser import DATA_DIR, build_cases
 
 app = FastAPI(
     title="CVLens API",
@@ -113,13 +113,18 @@ def serve_search(request: Request):
 
 @app.post("/resumes/upload", response_model=UploadResult)
 async def upload_resumes(
-    file: UploadFile = File(
-        ..., description="result.json — Telegram's chat export, unmodified"
-    ),
-    pdf_files: list[UploadFile] = File(
-        default=[],
-        description="CV PDFs referenced by result.json's messages (optional)",
-    ),
+    file: Annotated[
+        UploadFile,
+        File(
+            description="result.json — Telegram's chat export, unmodified",
+        ),
+    ],
+    pdf_files: Annotated[
+        list[UploadFile] | None,
+        File(
+            description="CV PDFs referenced by result.json's messages (optional)",
+        ),
+    ] = None,
 ):
     """
     Accepts result.json uploaded as a file (multipart/form-data, field name
@@ -155,17 +160,17 @@ async def upload_resumes(
     except json.JSONDecodeError as e:
         raise HTTPException(
             status_code=400, detail=f"'{file.filename}' is not valid JSON: {e}"
-        )
+        ) from e
 
     try:
         export = TelegramExportIn(**data)
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors())
+        raise HTTPException(status_code=422, detail=e.errors()) from e
 
     saved_pdf_names = []
     skipped_pdf_names = []
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for pdf in pdf_files:
+    for pdf in pdf_files or []:
         # Strip any directory component the browser/client sent — never
         # trust a client-supplied path (path traversal, e.g. "../../etc/x").
         safe_name = Path(pdf.filename).name
@@ -210,7 +215,7 @@ def _match_from_point(point) -> SearchMatchOut:
         skills=resume.skills,
         about_me_summary=resume.about_summary or resume.about_me_summary_raw,
         experience=resume.experience,
-        feedback_raw=resume.feedback_raw,                      # полный текст
+        feedback_raw=resume.feedback_raw,  # полный текст
         feedback_summary=resume.feedback_summary,
         feedback_sections=resume.feedback_sections,
         llm=resume.feedback_llm,
@@ -219,18 +224,24 @@ def _match_from_point(point) -> SearchMatchOut:
 
 @app.post("/resumes/search", response_model=SearchResponse)
 async def search_resumes(
-    file: UploadFile = File(
-        ...,
-        description="Query CV (PDF) to find similar historically-reviewed candidates for",
-    ),
-    limit: int = Form(
-        6,
-        description="Total number of matches to return (top match + up to limit-1 others)",
-    ),
-    skills: str = Form(
-        "",
-        description='Comma-separated skills that must ALL be present, e.g. "python,django"',
-    ),
+    file: Annotated[
+        UploadFile,
+        File(
+            description="Query CV (PDF) to find similar historically-reviewed candidates for",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Form(
+            description="Total number of matches to return (top match + up to limit-1 others)",
+        ),
+    ] = 6,
+    skills: Annotated[
+        str,
+        Form(
+            description='Comma-separated skills that must ALL be present, e.g. "python,django"',
+        ),
+    ] = "",
 ):
     """
     Parses the uploaded CV (no DB write — it's a live query, not saved),
@@ -253,7 +264,7 @@ async def search_resumes(
         try:
             query_case = vector_search.parse_query_cv(tmp_path)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     skills_list = [s.strip() for s in skills.split(",") if s.strip()] or None
     points = vector_search.search_similar(query_case, limit=limit, skills=skills_list)
@@ -288,16 +299,22 @@ def reindex_resumes():
 
 @app.get("/resumes", response_model=PaginatedResumeCards)
 def list_resumes(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
-    llm: Optional[str] = Query(None, description="Filter by about_llm or feedback_llm"),
-    has_feedback: Optional[bool] = Query(
-        None,
-        description="true: only resumes with feedback_sections set; false: only without",
-    ),
-    section: Optional[str] = Query(
-        None, description="Only resumes whose feedback_sections contains this value"
-    ),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    llm: Annotated[
+        str | None,
+        Query(description="Filter by about_llm or feedback_llm"),
+    ] = None,
+    has_feedback: Annotated[
+        bool | None,
+        Query(
+            description="true: only resumes with feedback_sections set; false: only without",
+        ),
+    ] = None,
+    section: Annotated[
+        str | None,
+        Query(description="Only resumes whose feedback_sections contains this value"),
+    ] = None,
 ):
     """
     Card-grid listing: one lightweight card per resume (role_position,
@@ -405,6 +422,6 @@ def create_prompt_version(name: str, body: PromptCreateIn):
                 f"It must be fillable with just the '{{{placeholder}}}' placeholder "
                 f"(no other {{...}} placeholders)."
             ),
-        )
+        ) from e
 
     return prompts_repo.create_next_version(name, body.system_text, body.user_template)
