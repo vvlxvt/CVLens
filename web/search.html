@@ -1,37 +1,5 @@
-{% extends "base.html" %} {% block title %}поиск похожих{% endblock %} {% block
-extra_css %}
-<style>
-  .score-badge {
-    font-size: 0.85rem;
-    font-weight: 700;
-    padding: 0.25rem 0.7rem;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    color: var(--accent-dark);
-    white-space: nowrap;
-  }
-  .selected-file-name {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .search-status {
-    font-size: 0.85rem;
-    min-height: 1.4em;
-  }
-  .other-match {
-    cursor: pointer;
-    transition:
-      transform 0.15s ease,
-      box-shadow 0.15s ease;
-  }
-
-  .other-match:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
-  }
-</style>
-{% endblock %} {% block search %}
-<div class="toolbar p-3 mb-3">
+{% extends "base.html" %} {% block title %}поиск похожих{% endblock %} {% block search %}
+<div class="toolbar app-panel p-3 mb-3">
   <div class="row g-2 align-items-end">
     <div class="col-12 col-md-3">
       <label class="form-label small text-muted mb-1">CV (PDF)</label>
@@ -45,7 +13,7 @@ extra_css %}
         </button>
        
       </div>
-       <span class="selected-file-name" id="selectedFileName"
+       <span class="selected-file-name d-block mt-1" id="selectedFileName"
           >Файл не выбран</span
         >
       <input

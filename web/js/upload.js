@@ -41,9 +41,9 @@
     const skippedBlock = el("skippedIdsBlock");
     if (result.skipped_ids.length > 0) {
       el("skippedIdsList").textContent = result.skipped_ids.join(", ");
-      skippedBlock.style.display = "block";
+      skippedBlock.classList.remove("d-none");
     } else {
-      skippedBlock.style.display = "none";
+      skippedBlock.classList.add("d-none");
     }
 
     resultBlock.classList.remove("d-none");
