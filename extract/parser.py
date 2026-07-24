@@ -286,9 +286,15 @@ def english_ratio(text: str) -> float:
 def extract_pdf_text(file_url: str, data_dir: Path = DATA_DIR) -> str:
     if not file_url:
         return ""
-    pdf_path = data_dir / file_url
+    
+    # Берем только 'resume.pdf', игнорируя 'files/' из file_url
+    pdf_path = data_dir / Path(file_url).name
+    
     if not pdf_path.exists():
+        # Добавим лог, чтобы сразу видеть, если файл реально потерялся
+        print(f"[warning] PDF file not found: {pdf_path}")
         return ""
+        
     with fitz.open(pdf_path) as doc:
         return "\n".join(page.get_text("text", sort=True) for page in doc)
 
@@ -514,6 +520,7 @@ def build_cases(
 
     Структура кейса соответствует колонкам таблицы resumes.
     """
+    # print("BUILD DATA_DIR:", data_dir.resolve())
     grouped = _group_messages_by_cv(messages)
 
     about_prompt = prompts_repo.get_latest("intro_extraction")
