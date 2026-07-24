@@ -1,0 +1,46 @@
+.upload-panel {
+  max-width: 720px;
+}
+
+.upload-panel .form-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.prompt-editor h5 {
+  font-weight: 700;
+  margin-bottom: 0.15rem;
+}
+
+.prompt-meta {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.prompt-editor label {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.prompt-editor textarea {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.other-match {
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.other-match:hover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}

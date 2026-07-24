@@ -1,0 +1,26 @@
+.app-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header .brand {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.app-header .brand .bi {
+  color: var(--accent);
+}
+
+@media (max-width: 767.98px) {
+  .app-header .container-xl {
+    align-items: flex-start !important;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .app-nav {
+    flex-wrap: wrap;
+    gap: 0.5rem !important;
+  }
+}

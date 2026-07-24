@@ -1,0 +1,23 @@
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1b1f27;
+  --text-muted: #6b7280;
+  --border: #e5e7eb;
+  --accent: #2f6f63;
+  --accent-soft: #e4f0ee;
+  --accent-dark: #24564c;
+  --empty-text: #9ca3af;
+
+  --sec-role-position: #ea580c;
+  --sec-skills: #2563eb;
+  --sec-about-me-summary: #7c3aed;
+  --sec-experience: #16a34a;
+  --sec-formatting: #6b7280;
+
+  --radius-sm: 0.4rem;
+  --radius-md: 0.6rem;
+  --radius-lg: 0.85rem;
+  --shadow-card-hover: 0 8px 20px rgba(27, 31, 39, 0.08);
+  --transition-fast: 0.12s ease;
+}

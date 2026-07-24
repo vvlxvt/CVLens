@@ -1,0 +1,14 @@
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+code,
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.list-group-item {
+  border-color: var(--border);
+}
