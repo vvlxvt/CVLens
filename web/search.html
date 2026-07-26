@@ -1,4 +1,4 @@
-{% extends "base.html" %} {% block title %}поиск похожих{% endblock %} {% block search %}
+{% extends "base.html" %} {% block title %}отклик по резюме{% endblock %} {% block search %}
 <div class="toolbar app-panel p-3 mb-3">
   <div class="row g-2 align-items-end">
     <div class="col-12 col-md-3">
@@ -25,14 +25,14 @@
     </div>
 
     <div class="col-6 col-md-2">
-      <label class="form-label small text-muted mb-1">Кол-во результатов</label>
+      <label class="form-label small text-muted mb-1">Кол-во примеров</label>
       <input
         type="number"
         class="form-control"
         id="limitInput"
-        value="6"
-        min="2"
-        max="50"
+        value="5"
+        min="1"
+        max="10"
       />
     </div>
 
@@ -50,7 +50,7 @@
 
     <div class="col-12 col-md-4 d-flex gap-2">
       <button class="btn btn-accent flex-grow-1" id="searchBtn" disabled>
-        <i class="bi bi-search"></i> Find similar
+        <i class="bi bi-stars"></i> Получить отклик
       </button>
       <button
         class="btn btn-outline-secondary"
@@ -67,31 +67,45 @@
 <!-- Loading -->
 <div id="loadingPanel" class="state-panel d-none">
   <div class="spinner-border text-secondary mb-2" role="status"></div>
-  <div>Ищем похожие резюме…</div>
+  <div>Готовим отклик по резюме…</div>
 </div>
 
 <!-- Error -->
 <div id="errorPanel" class="state-panel d-none">
   <i class="bi bi-exclamation-triangle"></i>
   <div class="fw-semibold mb-1" id="errorMessage">
-    Не удалось выполнить поиск
+    Не удалось получить отклик
   </div>
 </div>
 
 <!-- Empty -->
 <div id="emptyPanel" class="state-panel d-none">
   <i class="bi bi-inbox"></i>
-  <div class="fw-semibold mb-1">Похожих резюме не найдено</div>
+  <div class="fw-semibold mb-1">Отклик не сформирован</div>
   <div class="small">
-    Возможно, коллекция ещё не проиндексирована — нажми Reindex.
+    Проверь, что коллекция проиндексирована и LLM-провайдер доступен.
   </div>
 </div>
 
 <!-- Results -->
 <div id="resultsBlock" class="d-none">
   <div class="row g-4 mb-4">
-    <!-- Parsed CV: left, no feedback (this is a brand-new candidate) -->
-    <div class="col-lg-6">
+    <div class="col-lg-7">
+      <div class="detail-header mb-3">
+        <div class="d-flex align-items-start justify-content-between gap-3">
+          <div>
+            <h5 class="mb-1">Отклик по резюме</h5>
+            <div class="text-muted small" id="reviewModelLabel"></div>
+          </div>
+          <div class="review-score" id="reviewScore"></div>
+        </div>
+      </div>
+      <p class="review-summary mb-3" id="reviewSummary"></p>
+      <h6 class="detail-group-title">Рекомендации по секциям</h6>
+      <div class="review-section-list" id="reviewSections"></div>
+    </div>
+
+    <div class="col-lg-5">
       <div class="detail-header mb-3">
         <h5 class="mb-1" id="parsedTitle"></h5>
         <div class="text-muted small">Загруженное резюме</div>
@@ -99,29 +113,13 @@
       <h6 class="detail-group-title">Кандидат</h6>
       <ul class="list-group mb-4" id="parsedList"></ul>
     </div>
-
-    <!-- Top match: right, role + score in header, includes feedback -->
-    <div class="col-lg-6">
-      <div class="detail-header mb-3">
-        <h5 class="mb-1" id="topMatchTitle"></h5>
-        <div class="d-flex align-items-center gap-2 mt-1">
-          <span class="score-badge" id="topMatchScore"></span>
-          <span class="text-muted small" id="topMatchSubtitle"></span>
-        </div>
-        <div class="mt-2 d-flex flex-wrap gap-1" id="topMatchSectionTags"></div>
-      </div>
-      <h6 class="detail-group-title">Кандидат</h6>
-      <ul class="list-group mb-3" id="topMatchCandidateList"></ul>
-      <h6 class="detail-group-title">Фидбэк рекрутера</h6>
-      <ul class="list-group mb-3" id="topMatchFeedbackList"></ul>
-    </div>
   </div>
 
-  <h6 class="detail-group-title">Другие похожие резюме</h6>
-  <div
-    class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3"
-    id="otherMatchesGrid"
-  ></div>
+  <h6 class="detail-group-title">Следующие действия</h6>
+  <ul class="list-group mb-4" id="recommendedActions"></ul>
+
+  <h6 class="detail-group-title">Риски</h6>
+  <ul class="list-group" id="reviewRisks"></ul>
 </div>
 {% endblock %} {% block extra_js %}
 <script src="/static/js/search.js"></script>

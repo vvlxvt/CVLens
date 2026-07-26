@@ -15,21 +15,24 @@
   const emptyPanel = el("emptyPanel");
   const resultsBlock = el("resultsBlock");
 
-  let currentResults = null;
+  const SECTION_LABELS = {
+    role_position: "Позиционирование",
+    skills: "Навыки",
+    about_me_summary: "О себе / summary",
+    experience: "Опыт",
+    formatting: "Структура и оформление",
+  };
+
+  const STATUS_LABELS = {
+    good: "сильная зона",
+    weak: "нужно усилить",
+    missing: "не хватает данных",
+  };
 
   function escapeHtml(str) {
     const div = document.createElement("div");
     div.textContent = str ?? "";
     return div.innerHTML;
-  }
-
-  function sectionTag(section) {
-    return `<span class="badge rounded-pill section-pill ${escapeHtml(section)}">${escapeHtml(section)}</span>`;
-  }
-
-  function sectionTags(sections) {
-    if (!sections || sections.length === 0) return "";
-    return sections.map(sectionTag).join(" ");
   }
 
   function listItem(label, value, { mono = false } = {}) {
@@ -43,13 +46,13 @@
     `;
   }
 
-  function scorePercent(score) {
-    return `${Math.round(score * 100)}%`;
+  function simpleListItem(value) {
+    return `<li class="list-group-item">${escapeHtml(value || "—")}</li>`;
   }
 
-  // ---------------------------------------------------------------------
-  // File selection
-  // ---------------------------------------------------------------------
+  function normalizeStatus(status) {
+    return ["good", "weak", "missing"].includes(status) ? status : "weak";
+  }
 
   chooseFileBtn.addEventListener("click", () => fileInput.click());
 
@@ -64,10 +67,6 @@
     }
   });
 
-  // ---------------------------------------------------------------------
-  // Panels
-  // ---------------------------------------------------------------------
-
   function setPanels({
     loading = false,
     error = false,
@@ -80,10 +79,6 @@
     resultsBlock.classList.toggle("d-none", !results);
   }
 
-  // ---------------------------------------------------------------------
-  // Rendering
-  // ---------------------------------------------------------------------
-
   function renderParsedCV(parsed) {
     el("parsedTitle").textContent =
       parsed.full_name || parsed.role_position || "Резюме без названия";
@@ -95,84 +90,55 @@
     ].join("");
   }
 
-  function renderTopMatch(match) {
-    el("topMatchTitle").textContent =
-      match.role_position || `Резюме ${match.resume_id}`;
-    el("topMatchScore").textContent = `схожесть ${scorePercent(match.score)}`;
-    el("topMatchSubtitle").textContent = `ID: ${match.resume_id}`;
-    el("topMatchSectionTags").innerHTML =
-      sectionTags(match.feedback_sections) ||
-      '<span class="text-muted small">Секции фидбэка не определены</span>';
-
-    el("topMatchCandidateList").innerHTML = [
-      listItem("О себе", match.about_me_summary),
-      listItem("Навыки", match.skills),
-      listItem("Опыт", match.experience, { mono: true }),
-    ].join("");
-
-    el("topMatchFeedbackList").innerHTML = [
-      listItem("Саммари (LLM)", match.feedback_summary),
-      listItem("Полный фидбэк", match.feedback_raw, { mono: true }),
-      listItem("Модель", match.llm, { mono: true }),
-    ].join("");
-  }
-
-  function selectMatch(index) {
-    const previousTop = currentResults.top_match;
-
-    currentResults.top_match = currentResults.other_matches[index];
-    currentResults.other_matches[index] = previousTop;
-
-    renderResults(currentResults);
-  }
-
-  function otherMatchCard(match, index) {
-    const hasFeedback = !!match.feedback_summary;
-    const excerpt = hasFeedback
-      ? escapeHtml(match.feedback_summary)
-      : "Фидбэк ещё не обработан или неинформативен";
+  function sectionCard(name, section) {
+    const status = normalizeStatus(section?.status);
     return `
-      <div class="col">
-        <div class="cv-card card p-3 other-match" data-index="${index}">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div class="card-title mb-0">${escapeHtml(match.role_position) || "Роль не указана"}</div>
-            <span class="score-badge">${scorePercent(match.score)}</span>
-          </div>
-          <div class="feedback-excerpt ${hasFeedback ? "" : "empty"} mb-2">${excerpt}</div>
-          <div class="d-flex flex-wrap gap-1 align-items-center mt-auto">
-            ${sectionTags(match.feedback_sections)}
-            ${match.llm ? `<span class="llm-badge mono ms-auto">${escapeHtml(match.llm)}</span>` : ""}
-          </div>
+      <article class="review-section-card">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+          <h6 class="mb-0">${escapeHtml(SECTION_LABELS[name] || name)}</h6>
+          <span class="review-section-status ${status}">
+            ${escapeHtml(STATUS_LABELS[status])}
+          </span>
         </div>
-      </div>
+        <div class="review-section-text mb-2">${escapeHtml(section?.comment || "Комментарий не сформирован.")}</div>
+        <div class="review-section-suggestion">${escapeHtml(section?.suggestion || "Рекомендация не сформирована.")}</div>
+      </article>
     `;
   }
 
-  function renderResults(data) {
-    renderParsedCV(data.parsed_cv);
+  function renderReview(data) {
+    const review = data.review || {};
+    const sections = review.sections || {};
+    const orderedSections = [
+      "role_position",
+      "skills",
+      "about_me_summary",
+      "experience",
+      "formatting",
+    ];
 
-    if (data.top_match) {
-      renderTopMatch(data.top_match);
-    }
-
-    const grid = el("otherMatchesGrid");
-
-    grid.innerHTML = (data.other_matches || [])
-      .map((match, index) => otherMatchCard(match, index))
+    renderParsedCV(data.parsed_cv || {});
+    el("reviewScore").textContent = `${review.score ?? 0}/10`;
+    el("reviewModelLabel").textContent = [
+      data.llm ? `Модель: ${data.llm}` : "",
+      `${(data.examples || []).length} похожих примеров`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    el("reviewSummary").textContent = review.summary || "Краткий итог не сформирован.";
+    el("reviewSections").innerHTML = orderedSections
+      .map((name) => sectionCard(name, sections[name]))
       .join("");
 
-    grid.querySelectorAll(".other-match").forEach((card) => {
-      card.addEventListener("click", () => {
-        selectMatch(Number(card.dataset.index));
-      });
-    });
+    el("recommendedActions").innerHTML = (review.recommended_actions || []).length
+      ? review.recommended_actions.map(simpleListItem).join("")
+      : simpleListItem("Нет отдельных рекомендаций.");
+    el("reviewRisks").innerHTML = (review.risks || []).length
+      ? review.risks.map(simpleListItem).join("")
+      : simpleListItem("Явные риски не указаны.");
   }
 
-  // ---------------------------------------------------------------------
-  // Search
-  // ---------------------------------------------------------------------
-
-  async function runSearch() {
+  async function runReview() {
     const file = fileInput.files[0];
     if (!file) return;
 
@@ -181,16 +147,16 @@
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("limit", limitInput.value || "6");
+    formData.append("limit", limitInput.value || "5");
     formData.append("skills", skillsInput.value || "");
 
     try {
-      const res = await fetch("/resumes/search", {
+      const res = await fetch("/resumes/review", {
         method: "POST",
         body: formData,
       });
 
-      if (res.status === 400) {
+      if (res.status === 400 || res.status === 502) {
         const err = await res.json();
         el("errorMessage").textContent = err.detail;
         setPanels({ error: true });
@@ -199,27 +165,22 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      currentResults = data;
-
-      if (!data.top_match) {
+      if (!data.review) {
         setPanels({ empty: true });
         return;
       }
 
-      renderResults(currentResults);
+      renderReview(data);
       setPanels({ results: true });
     } catch (err) {
       console.error(err);
-      el("errorMessage").textContent = "Не удалось связаться с API.";
+      el("errorMessage").textContent =
+        "Не удалось получить отклик — проверь, что API, Qdrant и LLM-провайдер запущены.";
       setPanels({ error: true });
     }
   }
 
-  searchBtn.addEventListener("click", runSearch);
-
-  // ---------------------------------------------------------------------
-  // Reindex
-  // ---------------------------------------------------------------------
+  searchBtn.addEventListener("click", runReview);
 
   reindexBtn.addEventListener("click", async () => {
     reindexBtn.disabled = true;
