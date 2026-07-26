@@ -135,19 +135,44 @@ class SearchMatchOut(BaseModel):
     resume_id: str
     score: float
     role_position: str | None = None
-    skills: str = ""
-    about_me_summary: str = ""
-    experience: str = ""
-    feedback_summary: str = ""
-    feedback_raw: str = ""
+    skills: str | None = None
+    about_me_summary: str | None = None
+    experience: str | None = None
+    feedback_summary: str | None = None
+    feedback_raw: str | None = None
     feedback_sections: list[str] = Field(default_factory=list)
-    llm: str = ""
+    llm: str | None = None
 
 
 class SearchResponse(BaseModel):
     parsed_cv: ParsedCVOut
     top_match: SearchMatchOut | None = None
     other_matches: list[SearchMatchOut] = Field(default_factory=list)
+
+
+class ReviewSection(BaseModel):
+    status: str = ""
+    comment: str = ""
+    suggestion: str = ""
+
+
+class CVReviewReport(BaseModel):
+    summary: str = ""
+    score: int = Field(default=0, ge=0, le=10)
+    sections: dict[str, ReviewSection] = Field(default_factory=dict)
+    risks: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+
+
+class SimilarReviewExample(SearchMatchOut):
+    """A retrieved historical CV+feedback example used by the reviewer."""
+
+
+class ReviewResponse(BaseModel):
+    parsed_cv: ParsedCVOut
+    examples: list[SimilarReviewExample] = Field(default_factory=list)
+    review: CVReviewReport
+    llm: str = ""
 
 
 class ReindexResult(BaseModel):

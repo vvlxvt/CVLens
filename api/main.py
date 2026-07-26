@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 import vector_search
 from api.schemas import (
+    CVReviewReport,
     DeleteResult,
     PaginatedResumeCards,
     ParsedCVOut,
@@ -19,13 +20,16 @@ from api.schemas import (
     ReindexResult,
     ResumeCard,
     ResumeOut,
+    ReviewResponse,
     SearchMatchOut,
     SearchResponse,
+    SimilarReviewExample,
     TelegramExportIn,
     UploadResult,
 )
 from db import prompts_repo, resumes_repo
 from extract.parser import DATA_DIR, build_cases
+from response import generate_response
 
 app = FastAPI(
     title="CVLens API",
@@ -178,6 +182,7 @@ async def upload_resumes(
             skipped_pdf_names.append(pdf.filename)
             continue
         content = await pdf.read()
+        # print("UPLOAD DATA_DIR:", DATA_DIR.resolve())
         (DATA_DIR / safe_name).write_bytes(content)
         saved_pdf_names.append(safe_name)
 
@@ -185,6 +190,8 @@ async def upload_resumes(
     skipped_ids = []
 
     def _on_case_processed(case: dict):
+        # print(case.keys())
+        # print(case)
         if case.get("feedback_sections") is None:
             skipped_ids.append(case["resume_id"])
             return
@@ -203,10 +210,15 @@ async def upload_resumes(
     )
 
 
-def _match_from_point(point) -> SearchMatchOut:
+def _match_from_point(point) -> SearchMatchOut | None:
     payload = point.payload or {}
+    case_id = payload.get("case_id")
+    if case_id is None:
+        return None
 
-    resume = resumes_repo.get_by_resume_id(str(payload["case_id"]))
+    resume = resumes_repo.get_by_resume_id(str(case_id))
+    if resume is None:
+        return None
 
     return SearchMatchOut(
         resume_id=resume.resume_id,
@@ -220,6 +232,20 @@ def _match_from_point(point) -> SearchMatchOut:
         feedback_sections=resume.feedback_sections,
         llm=resume.feedback_llm,
     )
+
+
+def _parse_uploaded_query_cv(file: UploadFile, content: bytes) -> dict:
+    filename = Path(file.filename or "uploaded_cv.pdf").name
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail=f"'{filename}' must be a .pdf file")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / filename
+        tmp_path.write_bytes(content)
+        try:
+            return vector_search.parse_query_cv(tmp_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/resumes/search", response_model=SearchResponse)
@@ -252,24 +278,13 @@ async def search_resumes(
 
     Equivalent to the old CLI's `python vector_search.py --pdf ... --limit ... --skills ...`.
     """
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(
-            status_code=400, detail=f"'{file.filename}' must be a .pdf file"
-        )
-
     content = await file.read()
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / file.filename
-        tmp_path.write_bytes(content)
-        try:
-            query_case = vector_search.parse_query_cv(tmp_path)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+    query_case = _parse_uploaded_query_cv(file, content)
 
     skills_list = [s.strip() for s in skills.split(",") if s.strip()] or None
     points = vector_search.search_similar(query_case, limit=limit, skills=skills_list)
 
-    matches = [_match_from_point(p) for p in points]
+    matches = [match for point in points if (match := _match_from_point(point))]
     top_match = matches[0] if matches else None
     other_matches = matches[1:6]  # up to 5 more, shown as cards below
 
@@ -277,6 +292,139 @@ async def search_resumes(
         parsed_cv=ParsedCVOut(**query_case),
         top_match=top_match,
         other_matches=other_matches,
+    )
+
+
+def _clip(text: str | None, limit: int = 1800) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[:limit].rstrip() + "..."
+
+
+def _build_review_prompt(
+    parsed_cv: dict,
+    examples: list[SimilarReviewExample],
+) -> tuple[str, str]:
+    system = """
+You are a senior CV reviewer trained to imitate the judgment of an experienced HR reviewer.
+Use the historical examples as labeled examples, but review only the new CV.
+Return ONLY valid JSON matching the requested schema.
+""".strip()
+
+    example_blocks = []
+    for index, example in enumerate(examples, start=1):
+        example_blocks.append(
+            f"""
+Example {index}
+Role: {_clip(example.role_position, 500)}
+Skills: {_clip(example.skills)}
+About: {_clip(example.about_me_summary)}
+Experience: {_clip(example.experience)}
+HR feedback summary: {_clip(example.feedback_summary)}
+HR raw feedback: {_clip(example.feedback_raw)}
+Feedback sections: {", ".join(example.feedback_sections or [])}
+Similarity score: {example.score:.4f}
+""".strip()
+        )
+
+    user = f"""
+Historical HR-reviewed examples:
+{chr(10).join(example_blocks) if example_blocks else "No similar historical examples were found."}
+
+New CV to review:
+Full name: {_clip(parsed_cv.get("full_name"), 300)}
+Role: {_clip(parsed_cv.get("role_position"), 500)}
+Skills: {_clip(parsed_cv.get("skills"))}
+About: {_clip(parsed_cv.get("about_me_summary"))}
+Experience: {_clip(parsed_cv.get("experience"), 2800)}
+
+Write a strict, practical CV review in Russian.
+Calibrate the judgment and level of detail from the historical HR feedback examples.
+
+Return JSON with exactly this shape:
+{{
+  "summary": "short overall assessment",
+  "score": 0,
+  "sections": {{
+    "role_position": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "skills": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "about_me_summary": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "experience": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "formatting": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}}
+  }},
+  "risks": ["..."],
+  "recommended_actions": ["..."]
+}}
+
+Rules:
+- score is an integer from 0 to 10.
+- Do not invent facts that are not present in the CV.
+- If evidence is missing, mark the relevant section as "missing" or "weak".
+- Be specific and actionable.
+""".strip()
+
+    return system, user
+
+
+@app.post("/resumes/review", response_model=ReviewResponse)
+async def review_resume(
+    file: Annotated[
+        UploadFile,
+        File(description="Query CV (PDF) to review with similar historical examples"),
+    ],
+    limit: Annotated[
+        int,
+        Form(description="Number of similar reviewed CVs to use as few-shot examples"),
+    ] = 5,
+    skills: Annotated[
+        str,
+        Form(
+            description='Optional comma-separated skills filter, e.g. "python,django"',
+        ),
+    ] = "",
+):
+    """
+    Reviews a new CV using retrieval-augmented few-shot learning:
+    parse uploaded PDF, retrieve similar historically reviewed CVs, pass
+    their CV+feedback pairs as examples to the LLM, and return a structured
+    review. This endpoint does not save anything to the DB yet.
+    """
+    content = await file.read()
+    query_case = _parse_uploaded_query_cv(file, content)
+
+    example_limit = max(1, min(limit, 10))
+    skills_list = [s.strip() for s in skills.split(",") if s.strip()] or None
+    points = vector_search.search_similar(
+        query_case,
+        limit=example_limit,
+        skills=skills_list,
+    )
+    examples = [
+        SimilarReviewExample(**match.model_dump())
+        for point in points
+        if (match := _match_from_point(point))
+    ]
+
+    system, prompt = _build_review_prompt(query_case, examples)
+    try:
+        raw_review, applied_model = generate_response(
+            prompt,
+            json_mode=True,
+            system=system,
+        )
+        review = CVReviewReport.model_validate(raw_review)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"LLM returned an invalid review payload: {e}",
+        ) from e
+
+    return ReviewResponse(
+        parsed_cv=ParsedCVOut(**query_case),
+        examples=examples,
+        review=review,
+        llm=applied_model,
     )
 
 
