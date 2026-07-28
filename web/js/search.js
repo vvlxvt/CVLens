@@ -7,7 +7,6 @@
   const limitInput = el("limitInput");
   const skillsInput = el("skillsInput");
   const searchBtn = el("searchBtn");
-  const reindexBtn = el("reindexBtn");
   const searchStatus = el("searchStatus");
 
   const loadingPanel = el("loadingPanel");
@@ -246,25 +245,4 @@
     });
   });
 
-  reindexBtn.addEventListener("click", async () => {
-    reindexBtn.disabled = true;
-    searchStatus.textContent =
-      "Переиндексация… это может занять время (пересчёт эмбеддингов).";
-    searchStatus.className = "search-status mt-2 text-muted";
-
-    try {
-      const res = await fetch("/resumes/reindex", { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      searchStatus.textContent = `Готово: проиндексировано ${data.indexed} резюме.`;
-      searchStatus.className = "search-status mt-2 text-success";
-    } catch (err) {
-      console.error(err);
-      searchStatus.textContent =
-        "Не удалось переиндексировать — проверь, что API и Qdrant запущены.";
-      searchStatus.className = "search-status mt-2 text-danger";
-    } finally {
-      reindexBtn.disabled = false;
-    }
-  });
 })();

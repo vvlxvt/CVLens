@@ -54,10 +54,20 @@
                 <option value="48">48</option>
               </select>
             </div>
-            <div class="col-12 col-md-1 d-grid">
+            <div class="col-6 col-md-1 d-grid">
               <button class="btn btn-accent" id="applyFiltersBtn">
                 <i class="bi bi-funnel"></i>
               </button>
+            </div>
+            <div class="col-6 col-md-12 d-flex align-items-center gap-2">
+              <button
+                class="btn btn-outline-secondary btn-sm"
+                id="reindexBtn"
+                title="Пересобрать векторный индекс из текущей БД"
+              >
+                <i class="bi bi-arrow-repeat"></i> Reindex
+              </button>
+              <span class="search-status" id="reindexStatus"></span>
             </div>
           </div>
         </div>

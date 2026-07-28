@@ -93,6 +93,27 @@
   padding: 0.15rem 0.45rem;
 }
 
+.vector-badge {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  font-size: 0.72rem;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem;
+}
+
+.vector-badge.indexed {
+  background: #dcfce7;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.vector-badge.missing {
+  background: #f9fafb;
+  color: var(--text-muted);
+}
+
 .detail-header {
   border-bottom: 1px solid var(--border);
   padding-bottom: 1rem;

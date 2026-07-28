@@ -24,6 +24,8 @@
   const detailLoading = el("detailLoading");
   const detailError = el("detailError");
   const detailContent = el("detailContent");
+  const reindexBtn = el("reindexBtn");
+  const reindexStatus = el("reindexStatus");
 
   function escapeHtml(str) {
     const div = document.createElement("div");
@@ -140,6 +142,9 @@
 
   function cardTemplate(item) {
     const hasFeedback = !!item.feedback_summary;
+    const indexBadge = item.is_indexed
+      ? '<span class="vector-badge indexed"><i class="bi bi-check-circle"></i> В индексе</span>'
+      : '<span class="vector-badge missing"><i class="bi bi-dash-circle"></i> Не в индексе</span>';
     const excerpt = hasFeedback
       ? escapeHtml(item.feedback_summary)
       : "Фидбэк ещё не обработан или неинформативен";
@@ -150,6 +155,7 @@
           <div class="feedback-excerpt ${hasFeedback ? "" : "empty"} mb-2">${excerpt}</div>
           <div class="d-flex flex-wrap gap-1 align-items-center mt-auto">
             ${sectionTags(item.feedback_sections)}
+            ${indexBadge}
             ${item.llm ? `<span class="llm-badge mono ms-auto">${escapeHtml(item.llm)}</span>` : ""}
           </div>
         </div>
@@ -308,6 +314,29 @@
   el("nextPageBtn").addEventListener("click", () => {
     listState.skip += listState.limit;
     loadCards();
+  });
+
+  reindexBtn.addEventListener("click", async () => {
+    reindexBtn.disabled = true;
+    reindexStatus.textContent =
+      "Переиндексация… это может занять время (пересчёт эмбеддингов).";
+    reindexStatus.className = "search-status text-muted";
+
+    try {
+      const res = await fetch("/resumes/reindex", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      reindexStatus.textContent = `Готово: проиндексировано ${data.indexed} резюме.`;
+      reindexStatus.className = "search-status text-success";
+      loadCards();
+    } catch (err) {
+      console.error(err);
+      reindexStatus.textContent =
+        "Не удалось переиндексировать — проверь, что API и Qdrant запущены.";
+      reindexStatus.className = "search-status text-danger";
+    } finally {
+      reindexBtn.disabled = false;
+    }
   });
 
   el("backToListBtn").addEventListener("click", navigateToList);

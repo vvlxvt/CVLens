@@ -93,6 +93,7 @@ class ResumeCard(BaseModel):
     feedback_summary: str | None = None
     feedback_sections: list[str] | None = None
     llm: str | None = None
+    is_indexed: bool = False
 
 
 class PaginatedResumeCards(BaseModel):
