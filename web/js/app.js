@@ -87,13 +87,31 @@
     const qs = new URLSearchParams();
     qs.set("skip", skip);
     qs.set("limit", limit);
-    const hasFeedback = el("filterHasFeedback").value;
     const section = el("filterSection").value;
-    const llm = el("filterLlm").value.trim();
-    if (hasFeedback) qs.set("has_feedback", hasFeedback);
+    const llm = el("filterLlm").value;
     if (section) qs.set("section", section);
     if (llm) qs.set("llm", llm);
     return qs.toString();
+  }
+
+  async function loadLlmOptions() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/resumes/llms`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const llms = await res.json();
+      const select = el("filterLlm");
+      const currentValue = select.value;
+      select.innerHTML = '<option value="">Любая</option>';
+      llms.forEach((llm) => {
+        const option = document.createElement("option");
+        option.value = llm;
+        option.textContent = llm;
+        select.appendChild(option);
+      });
+      select.value = currentValue;
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   function setListPanels({ loading = false, error = false, empty = false }) {
@@ -121,14 +139,26 @@
 
       grid.innerHTML = data.items.map(cardTemplate).join("");
       grid.querySelectorAll("[data-resume-id]").forEach((cardEl) => {
-        cardEl.addEventListener("click", () =>
-          navigateToDetail(cardEl.dataset.resumeId),
-        );
+        cardEl.addEventListener("click", (e) => {
+          if (e.target.closest("[data-delete-resume-id]")) return;
+          navigateToDetail(cardEl.dataset.resumeId);
+        });
         cardEl.addEventListener("keydown", (e) => {
+          if (e.target.closest("[data-delete-resume-id]")) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             navigateToDetail(cardEl.dataset.resumeId);
           }
+        });
+      });
+      grid.querySelectorAll("[data-delete-resume-id]").forEach((button) => {
+        button.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteResume(
+            button.dataset.deleteResumeId,
+            button.dataset.deleteResumeTitle,
+          );
         });
       });
 
@@ -142,6 +172,7 @@
 
   function cardTemplate(item) {
     const hasFeedback = !!item.feedback_summary;
+    const title = escapeHtml(item.role_position) || "Роль не указана";
     const indexBadge = item.is_indexed
       ? '<span class="vector-badge indexed"><i class="bi bi-check-circle"></i> В индексе</span>'
       : '<span class="vector-badge missing"><i class="bi bi-dash-circle"></i> Не в индексе</span>';
@@ -151,7 +182,10 @@
     return `
       <div class="col">
         <div class="cv-card card p-3" data-resume-id="${escapeHtml(item.resume_id)}" tabindex="0" role="button">
-          <div class="card-title">${escapeHtml(item.role_position) || "Роль не указана"}</div>
+          <button type="button" class="resume-delete-btn" data-delete-resume-id="${escapeHtml(item.resume_id)}" data-delete-resume-title="${title}" aria-label="Удалить резюме" title="Удалить из базы">
+            <i class="bi bi-x-lg"></i>
+          </button>
+          <div class="card-title">${title}</div>
           <div class="feedback-excerpt ${hasFeedback ? "" : "empty"} mb-2">${excerpt}</div>
           <div class="d-flex flex-wrap gap-1 align-items-center mt-auto">
             ${sectionTags(item.feedback_sections)}
@@ -161,6 +195,26 @@
         </div>
       </div>
     `;
+  }
+
+  async function deleteResume(resumeId, title) {
+    const confirmed = window.confirm(
+      `Удалить резюме "${title}" из базы?\n\nID: ${resumeId}`,
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/resumes/${encodeURIComponent(resumeId)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadLlmOptions();
+      loadCards();
+    } catch (err) {
+      console.error(err);
+      window.alert("Не удалось удалить резюме. Проверь, что API доступен.");
+    }
   }
 
   function renderPagination() {
@@ -343,5 +397,6 @@
   el("detailPrevBtn").addEventListener("click", goToPrevResume);
   el("detailNextBtn").addEventListener("click", goToNextResume);
 
+  loadLlmOptions();
   syncFromUrl();
 })();
