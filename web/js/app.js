@@ -26,6 +26,16 @@
   const detailContent = el("detailContent");
   const reindexBtn = el("reindexBtn");
   const reindexStatus = el("reindexStatus");
+  const detailRecomputeModel = el("detailRecomputeModel");
+  const detailRecomputeBtn = el("detailRecomputeBtn");
+  const detailRecomputeStatus = el("detailRecomputeStatus");
+
+  let llmOptions = {
+    feedbackModels: [],
+    availableModels: [],
+    localModel: null,
+  };
+  let currentDetailResumeId = null;
 
   function escapeHtml(str) {
     const div = document.createElement("div");
@@ -96,13 +106,18 @@
 
   async function loadLlmOptions() {
     try {
-      const res = await fetch(`${API_BASE_URL}/resumes/llms`);
+      const res = await fetch(`${API_BASE_URL}/resumes/llm-options`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const llms = await res.json();
+      const data = await res.json();
+      llmOptions = {
+        feedbackModels: data.feedback_models || [],
+        availableModels: data.available_models || [],
+        localModel: data.local_model || null,
+      };
       const select = el("filterLlm");
       const currentValue = select.value;
       select.innerHTML = '<option value="">Любая</option>';
-      llms.forEach((llm) => {
+      llmOptions.feedbackModels.forEach((llm) => {
         const option = document.createElement("option");
         option.value = llm;
         option.textContent = llm;
@@ -112,6 +127,29 @@
     } catch (err) {
       console.error(err);
     }
+  }
+
+  function modelOptionLabel(model) {
+    if (llmOptions.localModel && model === llmOptions.localModel) {
+      return `${model} (локальная)`;
+    }
+    return model;
+  }
+
+  function populateRecomputeModels(currentModel) {
+    const models = llmOptions.availableModels.length
+      ? llmOptions.availableModels
+      : llmOptions.feedbackModels;
+    detailRecomputeModel.innerHTML = '<option value="">Выбери модель</option>';
+    models.forEach((model) => {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = modelOptionLabel(model);
+      detailRecomputeModel.appendChild(option);
+    });
+
+    const otherModel = models.find((model) => model !== currentModel);
+    detailRecomputeModel.value = otherModel || currentModel || "";
   }
 
   function setListPanels({ loading = false, error = false, empty = false }) {
@@ -247,6 +285,7 @@
   }
 
   function renderDetail(r) {
+    currentDetailResumeId = r.resume_id;
     el("detailTitle").textContent =
       r.full_name || r.role_position || `Резюме ${r.resume_id}`;
     el("detailSubtitle").textContent = [r.role_position, `ID: ${r.resume_id}`]
@@ -277,6 +316,8 @@
       listItem("created_at", r.created_at, { mono: true }),
       listItem("updated_at", r.updated_at, { mono: true }),
     ].join("");
+    populateRecomputeModels(r.feedback_llm);
+    detailRecomputeStatus.textContent = "";
   }
 
   const API_MAX_LIMIT = 500; // matches the API's le=500 cap on GET /resumes
@@ -393,10 +434,46 @@
     }
   });
 
+  detailRecomputeBtn.addEventListener("click", async () => {
+    const model = detailRecomputeModel.value;
+    if (!currentDetailResumeId || !model) return;
+
+    detailRecomputeBtn.disabled = true;
+    detailRecomputeModel.disabled = true;
+    detailRecomputeStatus.textContent =
+      "Пересчитываем фидбэк выбранной моделью...";
+    detailRecomputeStatus.className = "search-status text-muted";
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/resumes/${encodeURIComponent(currentDetailResumeId)}/feedback/recompute`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model }),
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updatedResume = await res.json();
+      await loadLlmOptions();
+      renderDetail(updatedResume);
+      detailRecomputeStatus.textContent = `Готово: ${updatedResume.feedback_llm}`;
+      detailRecomputeStatus.className = "search-status text-success";
+      loadCards();
+    } catch (err) {
+      console.error(err);
+      detailRecomputeStatus.textContent =
+        "Не удалось пересчитать фидбэк — проверь LLM-провайдер.";
+      detailRecomputeStatus.className = "search-status text-danger";
+    } finally {
+      detailRecomputeBtn.disabled = false;
+      detailRecomputeModel.disabled = false;
+    }
+  });
+
   el("backToListBtn").addEventListener("click", navigateToList);
   el("detailPrevBtn").addEventListener("click", goToPrevResume);
   el("detailNextBtn").addEventListener("click", goToNextResume);
 
-  loadLlmOptions();
-  syncFromUrl();
+  loadLlmOptions().finally(syncFromUrl);
 })();

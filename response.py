@@ -1,9 +1,10 @@
-from dotenv import load_dotenv
-from openai import OpenAI
-import openai
-from ollama import chat
 import json
 import os
+
+import openai
+from dotenv import load_dotenv
+from ollama import chat
+from openai import OpenAI
 
 from db import prompts_repo
 
@@ -30,7 +31,12 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 _force_ollama = False
 
 
-def _call_groq(prompt: str, json_mode: bool, system: str | None):
+def _call_groq(
+    prompt: str,
+    json_mode: bool,
+    system: str | None,
+    model: str | None = None,
+):
     if not openai_client:
         raise ValueError("GROQ_API_KEY is missing")
 
@@ -40,7 +46,7 @@ def _call_groq(prompt: str, json_mode: bool, system: str | None):
     messages.append({"role": "user", "content": prompt})
 
     kwargs = {
-        "model": MODEL,
+        "model": model or MODEL,
         "messages": messages,
         "temperature": 0,
     }
@@ -52,7 +58,12 @@ def _call_groq(prompt: str, json_mode: bool, system: str | None):
     return json.loads(content) if json_mode else content
 
 
-def _call_ollama(prompt: str, json_mode: bool, system: str | None):
+def _call_ollama(
+    prompt: str,
+    json_mode: bool,
+    system: str | None,
+    model: str | None = None,
+):
     default_system = (
         "You are a strict information extraction engine. "
         "You ALWAYS return ONLY valid JSON. No markdown. No text."
@@ -64,7 +75,7 @@ def _call_ollama(prompt: str, json_mode: bool, system: str | None):
     }
 
     response = chat(
-        model=OLLAMA_MODEL,
+        model=model or OLLAMA_MODEL,
         messages=[
             {"role": "system", "content": system or default_system},
             {"role": "user", "content": prompt},
@@ -81,7 +92,16 @@ def _call_ollama(prompt: str, json_mode: bool, system: str | None):
     return json.loads(content.strip()) if json_mode else content.strip()
 
 
-def generate_response(prompt: str, json_mode: bool = False, system: str | None = None):
+def configured_llm_options() -> list[str]:
+    return list(dict.fromkeys([MODEL, OLLAMA_MODEL]))
+
+
+def generate_response(
+    prompt: str,
+    json_mode: bool = False,
+    system: str | None = None,
+    model: str | None = None,
+):
     """
     Returns (result, applied_model) — the model actually used for THIS call,
     since a run can start on Groq/OpenAI and fall back to Ollama partway
@@ -93,6 +113,13 @@ def generate_response(prompt: str, json_mode: bool = False, system: str | None =
     model for this call and every call after it in this process.
     """
     global _force_ollama
+
+    if model:
+        if model == OLLAMA_MODEL or ":" in model:
+            result = _call_ollama(prompt, json_mode, system, model=model)
+            return result, model
+        result = _call_groq(prompt, json_mode, system, model=model)
+        return result, model
 
     if LLM_PROVIDER == "openai" and not _force_ollama:
         try:
@@ -150,8 +177,13 @@ def build_feedback_prompt(feedback_text: str) -> tuple[str, str, int]:
     return prompt.system_text, user, prompt.id
 
 
-def extract_feedback_data(feedback_text: str):
+def extract_feedback_data(feedback_text: str, model: str | None = None):
     """Returns (fields_dict, applied_model, prompt_id)."""
     system, user, prompt_id = build_feedback_prompt(feedback_text)
-    result, applied_model = generate_response(user, json_mode=True, system=system)
+    result, applied_model = generate_response(
+        user,
+        json_mode=True,
+        system=system,
+        model=model,
+    )
     return result, applied_model, prompt_id

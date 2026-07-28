@@ -61,7 +61,7 @@ def get_by_resume_id(resume_id: str) -> Resume | None:
 
 def update_feedback(
     resume_id: str,
-    feedback_summary: str,
+    feedback_summary: str | None,
     feedback_sections: list | None,
     llm: str,
     prompt_id: int,
@@ -150,17 +150,14 @@ def list_all() -> list[Resume]:
         return rows
 
 
-def list_llms() -> list[str]:
-    """Distinct LLM names used by either CV parsing or feedback parsing."""
+def list_feedback_llms() -> list[str]:
+    """Distinct LLM names used by feedback parsing."""
     with get_session() as session:
-        values = set()
-        for (value,) in session.query(Resume.about_llm).distinct():
-            if value:
-                values.add(value)
-        for (value,) in session.query(Resume.feedback_llm).distinct():
-            if value:
-                values.add(value)
-        return sorted(values)
+        return sorted(
+            value
+            for (value,) in session.query(Resume.feedback_llm).distinct()
+            if value
+        )
 
 
 def list_paginated(
@@ -182,9 +179,7 @@ def list_paginated(
     with get_session() as session:
         query = session.query(Resume)
         if llm:
-            query = query.filter(
-                (Resume.about_llm == llm) | (Resume.feedback_llm == llm)
-            )
+            query = query.filter(Resume.feedback_llm == llm)
         if has_feedback is True:
             query = query.filter(Resume.feedback_sections.isnot(None))
         elif has_feedback is False:
