@@ -186,5 +186,16 @@ class ReviewFeedbackResult(BaseModel):
     updated: bool
 
 
+class LlmOptions(BaseModel):
+    feedback_models: list[str] = Field(default_factory=list)
+    available_models: list[str] = Field(default_factory=list)
+    preferred_model: str | None = None
+    local_model: str | None = None
+
+
+class RecomputeFeedbackIn(BaseModel):
+    model: str = Field(min_length=1)
+
+
 class ReindexResult(BaseModel):
     indexed: int

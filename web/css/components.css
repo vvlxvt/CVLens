@@ -149,6 +149,10 @@
   font-weight: 700;
 }
 
+.feedback-recompute .form-select {
+  min-width: 15rem;
+}
+
 .detail-group-title,
 .item-label,
 .prompt-editor label {

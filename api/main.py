@@ -18,10 +18,12 @@ import vector_search
 from api.schemas import (
     CVReviewReport,
     DeleteResult,
+    LlmOptions,
     PaginatedResumeCards,
     ParsedCVOut,
     PromptCreateIn,
     PromptOut,
+    RecomputeFeedbackIn,
     ReindexResult,
     ResumeCard,
     ResumeOut,
@@ -36,7 +38,14 @@ from api.schemas import (
 )
 from db import prompts_repo, resumes_repo, reviews_repo
 from extract.parser import DATA_DIR, build_cases
-from response import generate_response
+from response import (
+    LLM_PROVIDER,
+    MODEL,
+    OLLAMA_MODEL,
+    configured_llm_options,
+    extract_feedback_data,
+    generate_response,
+)
 
 app = FastAPI(
     title="CVLens API",
@@ -466,7 +475,7 @@ def list_resumes(
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     llm: Annotated[
         str | None,
-        Query(description="Filter by about_llm or feedback_llm"),
+        Query(description="Filter by feedback_llm"),
     ] = None,
     has_feedback: Annotated[
         bool | None,
@@ -515,7 +524,19 @@ def list_resumes(
 
 @app.get("/resumes/llms", response_model=list[str])
 def list_resume_llms():
-    return resumes_repo.list_llms()
+    return resumes_repo.list_feedback_llms()
+
+
+@app.get("/resumes/llm-options", response_model=LlmOptions)
+def get_llm_options():
+    feedback_models = resumes_repo.list_feedback_llms()
+    available_models = list(dict.fromkeys([*configured_llm_options(), *feedback_models]))
+    return LlmOptions(
+        feedback_models=feedback_models,
+        available_models=available_models,
+        preferred_model=MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL,
+        local_model=OLLAMA_MODEL,
+    )
 
 
 @app.get("/resumes/{resume_id}", response_model=ResumeOut)
@@ -524,6 +545,44 @@ def get_resume(resume_id: str):
     if resume is None:
         raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
     return resume
+
+
+@app.post("/resumes/{resume_id}/feedback/recompute", response_model=ResumeOut)
+def recompute_resume_feedback(resume_id: str, body: RecomputeFeedbackIn):
+    resume = resumes_repo.get_by_resume_id(resume_id)
+    if resume is None:
+        raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
+    if not resume.feedback_raw:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resume {resume_id!r} has no raw feedback to recompute",
+        )
+
+    try:
+        fields, applied_model, prompt_id = extract_feedback_data(
+            resume.feedback_raw,
+            model=body.model,
+        )
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"LLM returned an invalid feedback payload: {e}",
+        ) from e
+
+    updated = resumes_repo.update_feedback(
+        resume_id=resume_id,
+        feedback_summary=fields.get("feedback_summary"),
+        feedback_sections=fields.get("feedback_sections"),
+        llm=applied_model,
+        prompt_id=prompt_id,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
+
+    refreshed = resumes_repo.get_by_resume_id(resume_id)
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
+    return refreshed
 
 
 # ---------------------------------------------------------------------------

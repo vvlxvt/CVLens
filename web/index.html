@@ -142,6 +142,28 @@
               id="detailSectionTags"
               class="mt-2 d-flex flex-wrap gap-1"
             ></div>
+            <div
+              class="feedback-recompute d-flex flex-wrap align-items-end gap-2 mt-3"
+            >
+              <div>
+                <label
+                  class="form-label small text-muted mb-1"
+                  for="detailRecomputeModel"
+                  >Пересчитать фидбэк моделью</label
+                >
+                <select class="form-select form-select-sm" id="detailRecomputeModel">
+                  <option value="">Выбери модель</option>
+                </select>
+              </div>
+              <button
+                class="btn btn-outline-secondary btn-sm"
+                id="detailRecomputeBtn"
+                type="button"
+              >
+                <i class="bi bi-arrow-repeat"></i> Пересчитать
+              </button>
+              <span class="search-status" id="detailRecomputeStatus"></span>
+            </div>
           </div>
 
           <div class="row g-4">
