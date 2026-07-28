@@ -100,3 +100,9 @@
 .review-section-suggestion {
   color: var(--text-muted);
 }
+
+.review-feedback .btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

@@ -119,7 +119,50 @@
   <ul class="list-group mb-4" id="recommendedActions"></ul>
 
   <h6 class="detail-group-title">Риски</h6>
-  <ul class="list-group" id="reviewRisks"></ul>
+  <ul class="list-group mb-4" id="reviewRisks"></ul>
+
+  <div class="review-feedback app-panel p-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div>
+        <h6 class="detail-group-title mb-1">Оценка отклика</h6>
+        <div class="text-muted small">Помогает улучшать качество review-промпта.</div>
+      </div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Оценка отклика">
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-rating="agree"
+        >
+          Согласен
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-rating="partially_agree"
+        >
+          Частично
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-rating="disagree"
+        >
+          Не согласен
+        </button>
+      </div>
+    </div>
+
+    <label class="form-label small text-muted mb-1" for="reviewFeedbackComment">
+      Комментарий
+    </label>
+    <textarea
+      class="form-control"
+      id="reviewFeedbackComment"
+      rows="3"
+      placeholder="Что было полезно или где система ошиблась?"
+    ></textarea>
+    <div class="search-status mt-2" id="reviewFeedbackStatus"></div>
+  </div>
 </div>
 {% endblock %} {% block extra_js %}
 <script src="/static/js/search.js"></script>

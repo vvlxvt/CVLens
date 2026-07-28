@@ -14,6 +14,11 @@
   const errorPanel = el("errorPanel");
   const emptyPanel = el("emptyPanel");
   const resultsBlock = el("resultsBlock");
+  const feedbackComment = el("reviewFeedbackComment");
+  const feedbackStatus = el("reviewFeedbackStatus");
+  const feedbackRatingButtons = document.querySelectorAll("[data-review-rating]");
+
+  let currentReviewId = null;
 
   const SECTION_LABELS = {
     role_position: "Позиционирование",
@@ -79,6 +84,23 @@
     resultsBlock.classList.toggle("d-none", !results);
   }
 
+  function setFeedbackButtonsDisabled(disabled) {
+    feedbackRatingButtons.forEach((button) => {
+      button.disabled = disabled;
+    });
+  }
+
+  function resetFeedbackForm() {
+    currentReviewId = null;
+    feedbackComment.value = "";
+    feedbackStatus.textContent = "";
+    feedbackStatus.className = "search-status mt-2";
+    feedbackRatingButtons.forEach((button) => {
+      button.classList.remove("active");
+      button.disabled = false;
+    });
+  }
+
   function renderParsedCV(parsed) {
     el("parsedTitle").textContent =
       parsed.full_name || parsed.role_position || "Резюме без названия";
@@ -117,6 +139,7 @@
       "formatting",
     ];
 
+    currentReviewId = data.review_id;
     renderParsedCV(data.parsed_cv || {});
     el("reviewScore").textContent = `${review.score ?? 0}/10`;
     el("reviewModelLabel").textContent = [
@@ -144,6 +167,7 @@
 
     setPanels({ loading: true });
     searchStatus.textContent = "";
+    resetFeedbackForm();
 
     const formData = new FormData();
     formData.append("file", file);
@@ -181,6 +205,46 @@
   }
 
   searchBtn.addEventListener("click", runReview);
+
+  feedbackRatingButtons.forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!currentReviewId) {
+        feedbackStatus.textContent = "Сначала получи отклик по резюме.";
+        feedbackStatus.className = "search-status mt-2 text-danger";
+        return;
+      }
+
+      setFeedbackButtonsDisabled(true);
+      feedbackStatus.textContent = "Сохраняем оценку…";
+      feedbackStatus.className = "search-status mt-2 text-muted";
+
+      try {
+        const res = await fetch(`/reviews/${currentReviewId}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rating: button.dataset.reviewRating,
+            comment: feedbackComment.value.trim() || null,
+          }),
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        feedbackRatingButtons.forEach((ratingButton) => {
+          ratingButton.classList.toggle("active", ratingButton === button);
+        });
+        feedbackStatus.textContent = "Оценка сохранена.";
+        feedbackStatus.className = "search-status mt-2 text-success";
+      } catch (err) {
+        console.error(err);
+        feedbackStatus.textContent =
+          "Не удалось сохранить оценку — попробуй ещё раз.";
+        feedbackStatus.className = "search-status mt-2 text-danger";
+      } finally {
+        setFeedbackButtonsDisabled(false);
+      }
+    });
+  });
 
   reindexBtn.addEventListener("click", async () => {
     reindexBtn.disabled = true;
