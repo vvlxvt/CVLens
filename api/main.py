@@ -20,6 +20,8 @@ from api.schemas import (
     ReindexResult,
     ResumeCard,
     ResumeOut,
+    ReviewFeedbackIn,
+    ReviewFeedbackResult,
     ReviewResponse,
     SearchMatchOut,
     SearchResponse,
@@ -27,7 +29,7 @@ from api.schemas import (
     TelegramExportIn,
     UploadResult,
 )
-from db import prompts_repo, resumes_repo
+from db import prompts_repo, resumes_repo, reviews_repo
 from extract.parser import DATA_DIR, build_cases
 from response import generate_response
 
@@ -419,8 +421,16 @@ async def review_resume(
             status_code=502,
             detail=f"LLM returned an invalid review payload: {e}",
         ) from e
+    review_id = reviews_repo.create(
+        uploaded_filename=Path(file.filename or "uploaded_cv.pdf").name,
+        parsed_cv=ParsedCVOut(**query_case).model_dump(),
+        similar_examples=[example.model_dump() for example in examples],
+        review=review.model_dump(),
+        llm=applied_model,
+    )
 
     return ReviewResponse(
+        review_id=review_id,
         parsed_cv=ParsedCVOut(**query_case),
         examples=examples,
         review=review,
@@ -504,6 +514,18 @@ def delete_resume(resume_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
     return DeleteResult(deleted=1, deleted_ids=[resume_id])
+
+
+@app.post("/reviews/{review_id}/feedback", response_model=ReviewFeedbackResult)
+def add_review_feedback(review_id: int, body: ReviewFeedbackIn):
+    updated = reviews_repo.add_feedback(
+        review_id=review_id,
+        user_rating=body.rating,
+        user_comment=body.comment,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Review {review_id!r} not found")
+    return ReviewFeedbackResult(updated=True)
 
 
 # ---------------------------------------------------------------------------

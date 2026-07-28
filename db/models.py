@@ -1,15 +1,15 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Column,
+    DateTime,
+    ForeignKey,
+    Index,
     Integer,
     String,
     Text,
-    ForeignKey,
-    DateTime,
-    JSON,
     UniqueConstraint,
-    Index,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -76,7 +76,9 @@ class Resume(Base):
     # raw recruiter feedback + LLM-derived extraction
     feedback_raw = Column(Text)  # original recruiter feedback text
     feedback_summary = Column(Text)  # LLM-generated 1-2 line summary
-    feedback_sections = Column(JSON(none_as_null=True)) # list[str] or None, e.g. ["skills", "experience"]
+    feedback_sections = Column(
+        JSON(none_as_null=True)
+    )  # list[str] or None, e.g. ["skills", "experience"]
     feedback_llm = Column(String, index=True)  # model used for feedback extraction
     feedback_prompt_id = Column(Integer, ForeignKey("prompts.id"), index=True)
     feedback_prompt = relationship("Prompt", foreign_keys=[feedback_prompt_id])
@@ -93,3 +95,29 @@ class Resume(Base):
 
     def __repr__(self) -> str:
         return f"<Resume id={self.id} resume_id={self.resume_id!r}>"
+
+
+class CVReview(Base):
+    """
+    Stores generated reviews for uploaded CVs.
+
+    This is the observability and feedback-loop layer for the review prompt:
+    every run keeps the parsed CV, retrieved examples, generated review, and
+    later the user's rating/comment for quality comparison across prompt
+    versions and retrieval settings.
+    """
+
+    __tablename__ = "cv_reviews"
+
+    id = Column(Integer, primary_key=True)
+    uploaded_filename = Column(String)
+    parsed_cv = Column(JSON(none_as_null=True), nullable=False)
+    similar_examples = Column(JSON(none_as_null=True), nullable=False)
+    review = Column(JSON(none_as_null=True), nullable=False)
+    llm = Column(String, index=True)
+    user_rating = Column(String, index=True)
+    user_comment = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    def __repr__(self) -> str:
+        return f"<CVReview id={self.id} uploaded_filename={self.uploaded_filename!r}>"
