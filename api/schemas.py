@@ -169,10 +169,20 @@ class SimilarReviewExample(SearchMatchOut):
 
 
 class ReviewResponse(BaseModel):
+    review_id: int
     parsed_cv: ParsedCVOut
     examples: list[SimilarReviewExample] = Field(default_factory=list)
     review: CVReviewReport
     llm: str = ""
+
+
+class ReviewFeedbackIn(BaseModel):
+    rating: str = Field(min_length=1, max_length=32)
+    comment: str | None = None
+
+
+class ReviewFeedbackResult(BaseModel):
+    updated: bool
 
 
 class ReindexResult(BaseModel):
