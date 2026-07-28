@@ -8,6 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+from qdrant_client.http.exceptions import (
+    ApiException,
+    ResponseHandlingException,
+    UnexpectedResponse,
+)
 
 import vector_search
 from api.schemas import (
@@ -482,6 +487,18 @@ def list_resumes(
     rows, total = resumes_repo.list_paginated(
         skip=skip, limit=limit, llm=llm, has_feedback=has_feedback, section=section
     )
+    try:
+        indexed_ids = vector_search.indexed_resume_ids()
+    except (
+        ApiException,
+        OSError,
+        ResponseHandlingException,
+        TimeoutError,
+        UnexpectedResponse,
+    ) as e:
+        print(f"[api] Could not read vector index status: {type(e).__name__}: {e}")
+        indexed_ids = set()
+
     items = [
         ResumeCard(
             resume_id=r.resume_id,
@@ -489,6 +506,7 @@ def list_resumes(
             feedback_summary=r.feedback_summary,
             feedback_sections=r.feedback_sections,
             llm=r.feedback_llm,
+            is_indexed=r.resume_id in indexed_ids,
         )
         for r in rows
     ]

@@ -54,7 +54,7 @@ def embedding_dimension(model: SentenceTransformer) -> int:
 
 
 def ensure_collection(vector_size: int, force_recreate: bool = False):
-    exists = any(c.name == COLLECTION_NAME for c in client.get_collections().collections)
+    exists = collection_exists()
 
     if exists and not force_recreate:
         return
@@ -179,6 +179,33 @@ def reindex_all() -> int:
     if points:
         client.upsert(collection_name=COLLECTION_NAME, points=points)
     return len(points)
+
+
+def collection_exists() -> bool:
+    return any(c.name == COLLECTION_NAME for c in client.get_collections().collections)
+
+
+def indexed_resume_ids() -> set[str]:
+    """Return resume_ids that currently exist as Qdrant vector points."""
+    if not collection_exists():
+        return set()
+
+    indexed: set[str] = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=256,
+            offset=offset,
+            with_payload=["case_id"],
+            with_vectors=False,
+        )
+        for point in points:
+            case_id = (point.payload or {}).get("case_id")
+            if case_id is not None:
+                indexed.add(str(case_id))
+        if offset is None:
+            return indexed
 
 
 def build_skills_filter(skills: list[str] | None) -> Filter | None:
