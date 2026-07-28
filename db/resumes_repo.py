@@ -1,12 +1,10 @@
-from typing import Optional
-
 from db.connection import get_session
 from db.models import Resume
 
 ALLOWED_SECTIONS = ("role_position", "skills", "about_me_summary", "experience", "formatting")
 
 
-def _clean_sections(sections: Optional[list]) -> Optional[list]:
+def _clean_sections(sections: list | None) -> list | None:
     if not sections:
         return None
     filtered = [s for s in sections if s in ALLOWED_SECTIONS]
@@ -53,7 +51,7 @@ def upsert(data: dict) -> int:
         return resume.id
 
 
-def get_by_resume_id(resume_id: str) -> Optional[Resume]:
+def get_by_resume_id(resume_id: str) -> Resume | None:
     with get_session() as session:
         resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
         if resume:
@@ -64,7 +62,7 @@ def get_by_resume_id(resume_id: str) -> Optional[Resume]:
 def update_feedback(
     resume_id: str,
     feedback_summary: str,
-    feedback_sections: Optional[list],
+    feedback_sections: list | None,
     llm: str,
     prompt_id: int,
 ) -> bool:
@@ -82,9 +80,9 @@ def update_feedback(
 
 def update_about(
     resume_id: str,
-    full_name: Optional[str],
-    role_position: Optional[str],
-    about_summary: Optional[str],
+    full_name: str | None,
+    role_position: str | None,
+    about_summary: str | None,
     llm: str,
     prompt_id: int,
 ) -> bool:
@@ -152,12 +150,25 @@ def list_all() -> list[Resume]:
         return rows
 
 
+def list_llms() -> list[str]:
+    """Distinct LLM names used by either CV parsing or feedback parsing."""
+    with get_session() as session:
+        values = set()
+        for (value,) in session.query(Resume.about_llm).distinct():
+            if value:
+                values.add(value)
+        for (value,) in session.query(Resume.feedback_llm).distinct():
+            if value:
+                values.add(value)
+        return sorted(values)
+
+
 def list_paginated(
     skip: int = 0,
     limit: int = 50,
-    llm: Optional[str] = None,
-    has_feedback: Optional[bool] = None,
-    section: Optional[str] = None,
+    llm: str | None = None,
+    has_feedback: bool | None = None,
+    section: str | None = None,
 ) -> tuple[list[Resume], int]:
     """
     Filtered/paginated listing for the API.

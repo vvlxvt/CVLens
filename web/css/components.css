@@ -15,6 +15,7 @@
   border-radius: var(--radius-lg);
   cursor: pointer;
   height: 100%;
+  position: relative;
   transition:
     transform var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -33,6 +34,31 @@
   font-size: 1.02rem;
   font-weight: 600;
   margin-bottom: 0.5rem;
+  padding-right: 2rem;
+}
+
+.resume-delete-btn {
+  align-items: center;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  color: #991b1b;
+  display: inline-flex;
+  height: 1.65rem;
+  justify-content: center;
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  width: 1.65rem;
+  z-index: 2;
+}
+
+.resume-delete-btn:hover,
+.resume-delete-btn:focus-visible {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+  outline: none;
 }
 
 .feedback-excerpt {

@@ -513,6 +513,11 @@ def list_resumes(
     return PaginatedResumeCards(total=total, skip=skip, limit=limit, items=items)
 
 
+@app.get("/resumes/llms", response_model=list[str])
+def list_resume_llms():
+    return resumes_repo.list_llms()
+
+
 @app.get("/resumes/{resume_id}", response_model=ResumeOut)
 def get_resume(resume_id: str):
     resume = resumes_repo.get_by_resume_id(resume_id)

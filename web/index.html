@@ -13,14 +13,6 @@
         <div class="toolbar app-panel p-3 mb-4">
           <div class="row g-2 align-items-end">
             <div class="col-6 col-md-3">
-              <label class="form-label small text-muted mb-1">Фидбэк</label>
-              <select class="form-select" id="filterHasFeedback">
-                <option value="">Все</option>
-                <option value="true">Есть фидбэк</option>
-                <option value="false">Без фидбэка</option>
-              </select>
-            </div>
-            <div class="col-6 col-md-3">
               <label class="form-label small text-muted mb-1"
                 >Секция фидбэка</label
               >
@@ -37,12 +29,9 @@
               <label class="form-label small text-muted mb-1"
                 >Модель (LLM)</label
               >
-              <input
-                type="text"
-                class="form-control"
-                id="filterLlm"
-                placeholder="например, llama-3.3-70b"
-              />
+              <select class="form-select" id="filterLlm">
+                <option value="">Любая</option>
+              </select>
             </div>
             <div class="col-6 col-md-2">
               <label class="form-label small text-muted mb-1"
