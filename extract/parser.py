@@ -8,15 +8,15 @@ from pathlib import Path
 
 import requests
 
+from db import prompts_repo, resumes_repo
 from response import (
-    extract_intro_data,
-    extract_feedback_data,
     LLM_PROVIDER,
     MODEL,
     OLLAMA_MODEL,
+    OPENAI_MODEL,
+    extract_feedback_data,
+    extract_intro_data,
 )
-
-from db import prompts_repo, resumes_repo
 
 try:
     import fitz
@@ -32,11 +32,10 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 # What SHOULD be used if the preferred provider is healthy — used only to
 # detect staleness (see _is_up_to_date). The model actually recorded on
 # each DB row (about_llm/feedback_llm) always reflects what really ran for
-# that call, which can differ from this if generate_response() fell back
-# to Ollama mid-run. Comparing against the *preferred* model here means a
-# CV that fell back to Ollama last time will correctly get reprocessed
-# (and upgraded) once the preferred provider is healthy again.
-PREFERRED_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
+# that call, which can differ if generate_response() falls back. About/summary
+# extraction is strongest-first; feedback keeps the configured provider policy.
+PREFERRED_ABOUT_MODEL = OPENAI_MODEL
+PREFERRED_FEEDBACK_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
 
 ADMINS = {
     "Aleksandr Valuev",
@@ -380,7 +379,10 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
     about_me_summary_raw = parsed.pop("about_me_summary")
 
     intro_text = "\n".join(intro_lines) + "\n" + about_me_summary_raw
-    fields, about_model, about_prompt_id = extract_intro_data(intro_text)  # ({full_name, role_position, summary}, model, prompt_id)
+    fields, about_model, about_prompt_id = extract_intro_data(
+        intro_text,
+        model=PREFERRED_ABOUT_MODEL,
+    )  # ({full_name, role_position, summary}, model, prompt_id)
 
     return {
         **parsed,
@@ -444,9 +446,9 @@ def _is_up_to_date(resume_id: str, feedback_raw: str, about_prompt_id: int, feed
     if existing is None:
         return False
     return (
-        existing.about_llm == PREFERRED_MODEL
+        existing.about_llm == PREFERRED_ABOUT_MODEL
         and existing.about_prompt_id == about_prompt_id
-        and existing.feedback_llm == PREFERRED_MODEL
+        and existing.feedback_llm == PREFERRED_FEEDBACK_MODEL
         and existing.feedback_prompt_id == feedback_prompt_id
         and (existing.feedback_raw or "") == feedback_raw
     )
@@ -489,7 +491,7 @@ def _process_one_cv(pid: int, file_url: str, feedback_raw: str, data_dir: Path) 
             "feedback_llm": feedback_model,
             "feedback_prompt_id": feedback_prompt_id,
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"[error] resume_id={pid} failed and was skipped: {type(e).__name__}: {e}")
         return None
 
@@ -557,7 +559,7 @@ def build_cases(
             pid = futures[future]
             try:
                 case = future.result()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 # _process_one_cv already catches its own errors internally
                 # and returns None — this is a defensive fallback in case
                 # something outside that try/except still blows up.
@@ -570,7 +572,7 @@ def build_cases(
             if on_case_processed is not None:
                 try:
                     on_case_processed(case)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     print(f"[error] resume_id={pid}: on_case_processed callback failed: {e}")
 
             cases.append(case)
