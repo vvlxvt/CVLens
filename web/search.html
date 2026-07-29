@@ -48,7 +48,27 @@
       />
     </div>
 
-    <div class="col-12 col-md-4 d-flex gap-2">
+    <div class="col-6 col-md-2">
+      <label class="form-label small text-muted mb-1">Язык</label>
+      <div class="btn-group btn-group-sm language-toggle w-100" role="group" aria-label="Язык отклика">
+        <button
+          type="button"
+          class="btn btn-outline-secondary active"
+          data-review-language="ru"
+        >
+          Русский
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-language="en"
+        >
+          English
+        </button>
+      </div>
+    </div>
+
+    <div class="col-6 col-md-2 d-flex gap-2">
       <button class="btn btn-accent flex-grow-1" id="searchBtn" disabled>
         <i class="bi bi-stars"></i> Получить отклик
       </button>
@@ -120,29 +140,6 @@
         <h6 class="detail-group-title mb-1">Оценка отклика</h6>
         <div class="text-muted small">Помогает улучшать качество review-промпта.</div>
       </div>
-      <div class="btn-group btn-group-sm" role="group" aria-label="Оценка отклика">
-        <button
-          type="button"
-          class="btn btn-outline-secondary"
-          data-review-rating="agree"
-        >
-          Согласен
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline-secondary"
-          data-review-rating="partially_agree"
-        >
-          Частично
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline-secondary"
-          data-review-rating="disagree"
-        >
-          Не согласен
-        </button>
-      </div>
     </div>
 
     <label class="form-label small text-muted mb-1" for="reviewFeedbackComment">
@@ -154,6 +151,34 @@
       rows="3"
       placeholder="Что было полезно или где система ошиблась?"
     ></textarea>
+    <div class="d-flex justify-content-end mt-3">
+      <div class="btn-group btn-group-sm" role="group" aria-label="Оценка отклика">
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-rating="agree"
+          disabled
+        >
+          Согласен
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-rating="partially_agree"
+          disabled
+        >
+          Частично
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          data-review-rating="disagree"
+          disabled
+        >
+          Не согласен
+        </button>
+      </div>
+    </div>
     <div class="search-status mt-2" id="reviewFeedbackStatus"></div>
   </div>
 </div>
