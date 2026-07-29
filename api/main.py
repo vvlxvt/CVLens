@@ -31,13 +31,15 @@ from api.schemas import (
     ReviewFeedbackIn,
     ReviewFeedbackResult,
     ReviewResponse,
+    ReviewRuleDiffOut,
+    ReviewRuleSetOut,
     SearchMatchOut,
     SearchResponse,
     SimilarReviewExample,
     TelegramExportIn,
     UploadResult,
 )
-from db import prompts_repo, resumes_repo, reviews_repo
+from db import prompts_repo, resumes_repo, review_rules_repo, reviews_repo
 from extract.parser import DATA_DIR, build_cases
 from response import (
     LLM_PROVIDER,
@@ -645,6 +647,25 @@ def add_review_feedback(review_id: int, body: ReviewFeedbackIn):
     if not updated:
         raise HTTPException(status_code=404, detail=f"Review {review_id!r} not found")
     return ReviewFeedbackResult(updated=True)
+
+
+@app.get("/review-rules/latest", response_model=ReviewRuleSetOut | None)
+def get_latest_review_rule_set():
+    return review_rules_repo.get_latest_active()
+
+
+@app.get("/review-rules", response_model=list[ReviewRuleSetOut])
+def list_review_rule_sets(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+):
+    return review_rules_repo.list_rule_sets(limit=limit)
+
+
+@app.get("/review-rules/diffs", response_model=list[ReviewRuleDiffOut])
+def list_review_rule_diffs(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+):
+    return review_rules_repo.list_diffs(limit=limit)
 
 
 # ---------------------------------------------------------------------------

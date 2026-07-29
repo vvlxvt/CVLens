@@ -121,3 +121,66 @@ class CVReview(Base):
 
     def __repr__(self) -> str:
         return f"<CVReview id={self.id} uploaded_filename={self.uploaded_filename!r}>"
+
+
+class CVReviewRuleSet(Base):
+    """
+    Versioned auto-learned rules for the CV review prompt.
+
+    Each row is a snapshot of the active rule set generated from accumulated
+    cv_reviews feedback. The base review prompt can later include the latest
+    active snapshot without losing the history of how rules changed.
+    """
+
+    __tablename__ = "cv_review_rule_sets"
+
+    id = Column(Integer, primary_key=True)
+    version = Column(String, unique=True, nullable=False, index=True)
+    rules = Column(JSON(none_as_null=True), nullable=False)
+    source_review_ids = Column(JSON(none_as_null=True), nullable=False)
+    summary = Column(Text)
+    status = Column(String, nullable=False, default="active", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    def __repr__(self) -> str:
+        return f"<CVReviewRuleSet id={self.id} version={self.version!r}>"
+
+
+class CVReviewRuleDiff(Base):
+    """
+    Git-like diff between two rule set versions.
+
+    Stores added/changed/removed rule groups so the UI can show prompt
+    evolution as a concise history rather than a black-box replacement.
+    """
+
+    __tablename__ = "cv_review_rule_diffs"
+
+    id = Column(Integer, primary_key=True)
+    from_rule_set_id = Column(Integer, ForeignKey("cv_review_rule_sets.id"))
+    to_rule_set_id = Column(
+        Integer,
+        ForeignKey("cv_review_rule_sets.id"),
+        nullable=False,
+        index=True,
+    )
+    added_rules = Column(JSON(none_as_null=True), nullable=False)
+    changed_rules = Column(JSON(none_as_null=True), nullable=False)
+    removed_rules = Column(JSON(none_as_null=True), nullable=False)
+    summary = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    from_rule_set = relationship(
+        "CVReviewRuleSet",
+        foreign_keys=[from_rule_set_id],
+    )
+    to_rule_set = relationship(
+        "CVReviewRuleSet",
+        foreign_keys=[to_rule_set_id],
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CVReviewRuleDiff id={self.id} "
+            f"from={self.from_rule_set_id!r} to={self.to_rule_set_id!r}>"
+        )

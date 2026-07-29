@@ -186,6 +186,31 @@ class ReviewFeedbackResult(BaseModel):
     updated: bool
 
 
+class ReviewRuleSetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    version: str
+    rules: list[dict] = Field(default_factory=list)
+    source_review_ids: list[int] = Field(default_factory=list)
+    summary: str | None = None
+    status: str
+    created_at: datetime
+
+
+class ReviewRuleDiffOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    from_rule_set_id: int | None = None
+    to_rule_set_id: int
+    added_rules: list[dict] = Field(default_factory=list)
+    changed_rules: list[dict] = Field(default_factory=list)
+    removed_rules: list[dict] = Field(default_factory=list)
+    summary: str | None = None
+    created_at: datetime
+
+
 class LlmOptions(BaseModel):
     feedback_models: list[str] = Field(default_factory=list)
     available_models: list[str] = Field(default_factory=list)
