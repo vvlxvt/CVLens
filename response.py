@@ -270,10 +270,15 @@ def build_intro_prompt(intro_text: str) -> tuple[str, str, int]:
     return prompt.system_text, user, prompt.id
 
 
-def extract_intro_data(intro_lines: str):
+def extract_intro_data(intro_lines: str, model: str | None = None):
     """Returns (fields_dict, applied_model, prompt_id)."""
     system, user, prompt_id = build_intro_prompt(intro_lines)
-    result, applied_model = generate_response(user, json_mode=True, system=system)
+    result, applied_model = generate_response(
+        user,
+        json_mode=True,
+        system=system,
+        model=model,
+    )
     return result, applied_model, prompt_id
 
 
