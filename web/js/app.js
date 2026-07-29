@@ -308,7 +308,6 @@
     ].join("");
 
     el("metaList").innerHTML = [
-      listItem("resume_id", r.resume_id, { mono: true }),
       listItem("about_llm", r.about_llm, { mono: true }),
       listItem("feedback_llm", r.feedback_llm, { mono: true }),
       listItem("about_prompt_id", r.about_prompt_id, { mono: true }),
