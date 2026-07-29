@@ -11,16 +11,25 @@ from db import prompts_repo
 load_dotenv(override=True)
 
 groq_api_key = os.getenv("GROQ_API_KEY")
+official_openai_api_key = os.getenv("OPENAI_API_KEY")
 
-openai_client = OpenAI(
-    api_key=groq_api_key,
-    base_url="https://api.groq.com/openai/v1",
+groq_client = (
+    OpenAI(
+        api_key=groq_api_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+    if groq_api_key
+    else None
+)
+official_openai_client = (
+    OpenAI(api_key=official_openai_api_key) if official_openai_api_key else None
 )
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "0"))
 
 MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 
 # Sticky flag: once the cloud provider fails once (rate limit, exhausted
@@ -37,8 +46,10 @@ def _call_groq(
     system: str | None,
     model: str | None = None,
 ):
-    if not openai_client:
+    if not groq_api_key:
         raise ValueError("GROQ_API_KEY is missing")
+    if groq_client is None:
+        raise ValueError("Groq client is not configured")
 
     messages = []
     if system:
@@ -53,7 +64,36 @@ def _call_groq(
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
-    response = openai_client.chat.completions.create(**kwargs)
+    response = groq_client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content
+    return json.loads(content) if json_mode else content
+
+
+def _call_openai(
+    prompt: str,
+    json_mode: bool,
+    system: str | None,
+    model: str | None = None,
+):
+    if not official_openai_api_key:
+        raise ValueError("OPENAI_API_KEY is missing")
+    if official_openai_client is None:
+        raise ValueError("OpenAI client is not configured")
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    kwargs = {
+        "model": model or OPENAI_MODEL,
+        "messages": messages,
+        "temperature": 0,
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = official_openai_client.chat.completions.create(**kwargs)
     content = response.choices[0].message.content
     return json.loads(content) if json_mode else content
 
@@ -93,7 +133,52 @@ def _call_ollama(
 
 
 def configured_llm_options() -> list[str]:
-    return list(dict.fromkeys([MODEL, OLLAMA_MODEL]))
+    return list(dict.fromkeys([MODEL, OPENAI_MODEL, OLLAMA_MODEL]))
+
+
+def _fallback_to_ollama(
+    prompt: str,
+    json_mode: bool,
+    system: str | None,
+    failed_provider: str,
+    error: Exception,
+):
+    print(
+        f"[response] {failed_provider} failed ({type(error).__name__}: {error}); "
+        f"falling back to Ollama ({OLLAMA_MODEL})."
+    )
+    result = _call_ollama(prompt, json_mode, system)
+    return result, OLLAMA_MODEL
+
+
+def _fallback_to_groq_then_ollama(
+    prompt: str,
+    json_mode: bool,
+    system: str | None,
+    failed_provider: str,
+    error: Exception,
+):
+    global _force_ollama
+
+    print(
+        f"[response] {failed_provider} failed ({type(error).__name__}: {error}); "
+        "trying the next configured LLM."
+    )
+
+    if groq_api_key and not _force_ollama:
+        try:
+            result = _call_groq(prompt, json_mode, system)
+            return result, MODEL
+        except (openai.OpenAIError, ValueError) as groq_error:
+            print(
+                f"[response] Groq/OpenAI-compatible call failed "
+                f"({type(groq_error).__name__}: {groq_error}); "
+                f"falling back to Ollama ({OLLAMA_MODEL}) for the rest of this run."
+            )
+            _force_ollama = True
+
+    result = _call_ollama(prompt, json_mode, system)
+    return result, OLLAMA_MODEL
 
 
 def generate_response(
@@ -107,10 +192,9 @@ def generate_response(
     since a run can start on Groq/OpenAI and fall back to Ollama partway
     through if the cloud provider runs out of tokens/quota.
 
-    If LLM_PROVIDER="openai", tries Groq/OpenAI first. On any failure
-    (rate limit, exhausted quota, auth error, network error — anything
-    from the openai SDK), logs why and falls back to the local Ollama
-    model for this call and every call after it in this process.
+    If LLM_PROVIDER="official_openai", uses the user's OpenAI API key.
+    If LLM_PROVIDER="openai", keeps the historical Groq/OpenAI-compatible
+    path and falls back to Ollama after the first provider failure.
     """
     global _force_ollama
 
@@ -118,8 +202,36 @@ def generate_response(
         if model == OLLAMA_MODEL or ":" in model:
             result = _call_ollama(prompt, json_mode, system, model=model)
             return result, model
-        result = _call_groq(prompt, json_mode, system, model=model)
-        return result, model
+        if model == OPENAI_MODEL:
+            try:
+                result = _call_openai(prompt, json_mode, system, model=model)
+                return result, model
+            except (openai.OpenAIError, ValueError) as e:
+                return _fallback_to_groq_then_ollama(
+                    prompt,
+                    json_mode,
+                    system,
+                    "Official OpenAI",
+                    e,
+                )
+        try:
+            result = _call_groq(prompt, json_mode, system, model=model)
+            return result, model
+        except (openai.OpenAIError, ValueError) as e:
+            return _fallback_to_ollama(prompt, json_mode, system, "Groq", e)
+
+    if LLM_PROVIDER == "official_openai":
+        try:
+            result = _call_openai(prompt, json_mode, system)
+            return result, OPENAI_MODEL
+        except (openai.OpenAIError, ValueError) as e:
+            return _fallback_to_groq_then_ollama(
+                prompt,
+                json_mode,
+                system,
+                "Official OpenAI",
+                e,
+            )
 
     if LLM_PROVIDER == "openai" and not _force_ollama:
         try:
