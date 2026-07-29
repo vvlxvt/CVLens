@@ -16,8 +16,10 @@
   const feedbackComment = el("reviewFeedbackComment");
   const feedbackStatus = el("reviewFeedbackStatus");
   const feedbackRatingButtons = document.querySelectorAll("[data-review-rating]");
+  const reviewLanguageButtons = document.querySelectorAll("[data-review-language]");
 
   let currentReviewId = null;
+  let currentReviewLanguage = "ru";
 
   const SECTION_LABELS = {
     role_position: "Позиционирование",
@@ -89,6 +91,11 @@
     });
   }
 
+  function updateFeedbackButtonState() {
+    const hasComment = feedbackComment.value.trim().length > 0;
+    setFeedbackButtonsDisabled(!hasComment);
+  }
+
   function resetFeedbackForm() {
     currentReviewId = null;
     feedbackComment.value = "";
@@ -96,8 +103,8 @@
     feedbackStatus.className = "search-status mt-2";
     feedbackRatingButtons.forEach((button) => {
       button.classList.remove("active");
-      button.disabled = false;
     });
+    updateFeedbackButtonState();
   }
 
   function renderParsedCV(parsed) {
@@ -172,6 +179,7 @@
     formData.append("file", file);
     formData.append("limit", limitInput.value || "5");
     formData.append("skills", skillsInput.value || "");
+    formData.append("language", currentReviewLanguage);
 
     try {
       const res = await fetch("/resumes/review", {
@@ -205,11 +213,34 @@
 
   searchBtn.addEventListener("click", runReview);
 
+  reviewLanguageButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      currentReviewLanguage = button.dataset.reviewLanguage || "ru";
+      reviewLanguageButtons.forEach((languageButton) => {
+        languageButton.classList.toggle("active", languageButton === button);
+      });
+    });
+  });
+
+  feedbackComment.addEventListener("input", () => {
+    updateFeedbackButtonState();
+    if (feedbackComment.value.trim()) {
+      feedbackStatus.textContent = "";
+      feedbackStatus.className = "search-status mt-2";
+    }
+  });
+
   feedbackRatingButtons.forEach((button) => {
     button.addEventListener("click", async () => {
       if (!currentReviewId) {
         feedbackStatus.textContent = "Сначала получи отклик по резюме.";
         feedbackStatus.className = "search-status mt-2 text-danger";
+        return;
+      }
+      if (!feedbackComment.value.trim()) {
+        feedbackStatus.textContent = "Добавь комментарий перед оценкой отклика.";
+        feedbackStatus.className = "search-status mt-2 text-danger";
+        updateFeedbackButtonState();
         return;
       }
 
@@ -223,7 +254,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             rating: button.dataset.reviewRating,
-            comment: feedbackComment.value.trim() || null,
+            comment: feedbackComment.value.trim(),
           }),
         });
 
@@ -240,7 +271,7 @@
           "Не удалось сохранить оценку — попробуй ещё раз.";
         feedbackStatus.className = "search-status mt-2 text-danger";
       } finally {
-        setFeedbackButtonsDisabled(false);
+        updateFeedbackButtonState();
       }
     });
   });

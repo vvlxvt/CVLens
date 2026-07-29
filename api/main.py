@@ -321,7 +321,9 @@ def _clip(text: str | None, limit: int = 1800) -> str:
 def _build_review_prompt(
     parsed_cv: dict,
     examples: list[SimilarReviewExample],
+    language: str = "ru",
 ) -> tuple[str, str]:
+    output_language = "English" if language == "en" else "Russian"
     system = """
 You are a senior CV reviewer trained to imitate the judgment of an experienced HR reviewer.
 Use the historical examples as labeled examples, but review only the new CV.
@@ -355,7 +357,7 @@ Skills: {_clip(parsed_cv.get("skills"))}
 About: {_clip(parsed_cv.get("about_me_summary"))}
 Experience: {_clip(parsed_cv.get("experience"), 2800)}
 
-Write a strict, practical CV review in Russian.
+Write a strict, practical CV review in {output_language}.
 Calibrate the judgment and level of detail from the historical HR feedback examples.
 
 Return JSON with exactly this shape:
@@ -378,6 +380,7 @@ Rules:
 - Do not invent facts that are not present in the CV.
 - If evidence is missing, mark the relevant section as "missing" or "weak".
 - Be specific and actionable.
+- All human-readable JSON values must be written in {output_language}.
 """.strip()
 
     return system, user
@@ -399,6 +402,10 @@ async def review_resume(
             description='Optional comma-separated skills filter, e.g. "python,django"',
         ),
     ] = "",
+    language: Annotated[
+        str,
+        Form(description='Review language: "ru" or "en"'),
+    ] = "ru",
 ):
     """
     Reviews a new CV using retrieval-augmented few-shot learning:
@@ -406,6 +413,10 @@ async def review_resume(
     their CV+feedback pairs as examples to the LLM, and return a structured
     review. This endpoint does not save anything to the DB yet.
     """
+    language = language.lower().strip()
+    if language not in {"ru", "en"}:
+        raise HTTPException(status_code=400, detail='language must be "ru" or "en"')
+
     content = await file.read()
     query_case = _parse_uploaded_query_cv(file, content)
 
@@ -422,7 +433,7 @@ async def review_resume(
         if (match := _match_from_point(point))
     ]
 
-    system, prompt = _build_review_prompt(query_case, examples)
+    system, prompt = _build_review_prompt(query_case, examples, language=language)
     try:
         raw_review, applied_model = generate_response(
             prompt,
