@@ -153,6 +153,35 @@
   min-width: 15rem;
 }
 
+.detail-meta-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+
+.detail-meta-list {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+.detail-meta-list .list-group-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+}
+
+.detail-meta-list .item-value {
+  font-size: 0.8rem;
+}
+
+@media (min-width: 768px) {
+  .detail-meta-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .detail-group-title,
 .item-label,
 .prompt-editor label {
