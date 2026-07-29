@@ -56,7 +56,8 @@ Each **resume** in the database contains:
 - A [Qdrant](https://qdrant.tech/) instance (cloud or self-hosted)
 - One of:
   - [Ollama](https://ollama.com/) with a local model (default: `llama3.2:3b`), or
-  - [Groq](https://groq.com/) API key (used by `response.py` when `LLM_PROVIDER=openai`)
+  - [Groq](https://groq.com/) API key (used by `response.py` when `LLM_PROVIDER=openai`), or
+  - OpenAI API key (used by `response.py` when `LLM_PROVIDER=official_openai`)
 
 Embedding models are downloaded automatically on first run via `sentence-transformers`.
 
@@ -83,16 +84,17 @@ QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-api-key
 QDRANT_VERIFY_SSL=false
 
-# LLM provider: ollama (default) or openai
+# LLM provider: ollama (default), openai (Groq-compatible), or official_openai
 LLM_PROVIDER=ollama
 OLLAMA_NUM_GPU=0
 
 # Groq (used by response.py when LLM_PROVIDER=openai)
 GROQ_API_KEY=your-groq-key
+GROQ_MODEL=llama-3.3-70b-versatile
 
-# OpenAI (used by main.py and response.py when LLM_PROVIDER=openai)
+# OpenAI official API (also appears in the selectable model list)
 OPENAI_API_KEY=your-openai-key
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.1
 
 # Database (SQLite - default, no additional config needed)
 # Database file: resumes.db (created automatically)

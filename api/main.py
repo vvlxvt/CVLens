@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from openai import OpenAIError
 from pydantic import ValidationError
 from qdrant_client.http.exceptions import (
     ApiException,
@@ -42,6 +43,7 @@ from response import (
     LLM_PROVIDER,
     MODEL,
     OLLAMA_MODEL,
+    OPENAI_MODEL,
     configured_llm_options,
     extract_feedback_data,
     generate_response,
@@ -318,6 +320,10 @@ def _clip(text: str | None, limit: int = 1800) -> str:
     return value[:limit].rstrip() + "..."
 
 
+def _llm_provider_error_detail(error: OpenAIError) -> str:
+    return f"LLM provider error ({type(error).__name__}): {error}"
+
+
 def _build_review_prompt(
     parsed_cv: dict,
     examples: list[SimilarReviewExample],
@@ -441,6 +447,11 @@ async def review_resume(
             system=system,
         )
         review = CVReviewReport.model_validate(raw_review)
+    except OpenAIError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=_llm_provider_error_detail(e),
+        ) from e
     except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=502,
@@ -541,11 +552,15 @@ def list_resume_llms():
 @app.get("/resumes/llm-options", response_model=LlmOptions)
 def get_llm_options():
     feedback_models = resumes_repo.list_feedback_llms()
-    available_models = list(dict.fromkeys([*configured_llm_options(), *feedback_models]))
+    available_models = configured_llm_options()
+    preferred_model = {
+        "official_openai": OPENAI_MODEL,
+        "openai": MODEL,
+    }.get(LLM_PROVIDER, OLLAMA_MODEL)
     return LlmOptions(
         feedback_models=feedback_models,
         available_models=available_models,
-        preferred_model=MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL,
+        preferred_model=preferred_model,
         local_model=OLLAMA_MODEL,
     )
 
@@ -560,6 +575,12 @@ def get_resume(resume_id: str):
 
 @app.post("/resumes/{resume_id}/feedback/recompute", response_model=ResumeOut)
 def recompute_resume_feedback(resume_id: str, body: RecomputeFeedbackIn):
+    if body.model not in configured_llm_options():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model {body.model!r} is not configured for recompute",
+        )
+
     resume = resumes_repo.get_by_resume_id(resume_id)
     if resume is None:
         raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
@@ -574,6 +595,11 @@ def recompute_resume_feedback(resume_id: str, body: RecomputeFeedbackIn):
             resume.feedback_raw,
             model=body.model,
         )
+    except OpenAIError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=_llm_provider_error_detail(e),
+        ) from e
     except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=502,

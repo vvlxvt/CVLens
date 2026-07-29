@@ -452,7 +452,10 @@
           body: JSON.stringify({ model }),
         },
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || `HTTP ${res.status}`);
+      }
       const updatedResume = await res.json();
       await loadLlmOptions();
       renderDetail(updatedResume);
@@ -461,8 +464,10 @@
       loadCards();
     } catch (err) {
       console.error(err);
-      detailRecomputeStatus.textContent =
-        "Не удалось пересчитать фидбэк — проверь LLM-провайдер.";
+      const message = err.message.includes("insufficient_quota")
+        ? "Не удалось пересчитать фидбэк: закончилась квота OpenAI API или не настроен billing."
+        : `Не удалось пересчитать фидбэк: ${err.message}`;
+      detailRecomputeStatus.textContent = message;
       detailRecomputeStatus.className = "search-status text-danger";
     } finally {
       detailRecomputeBtn.disabled = false;
