@@ -228,6 +228,7 @@ def parse_query_cv(pdf_path: Path) -> dict:
         "role_position": sections.get("role_position") or "",
         "skills": sections.get("skills") or "",
         "about_me_summary": sections.get("about_summary") or sections.get("about_me_summary_raw") or "",
+        "about_me_summary_raw": sections.get("about_me_summary_raw") or "",
         "experience": sections.get("experience") or "",
     }
 

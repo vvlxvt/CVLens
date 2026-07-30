@@ -259,6 +259,7 @@ def _match_from_point(point) -> SearchMatchOut | None:
         role_position=resume.role_position,
         skills=resume.skills,
         about_me_summary=resume.about_summary or resume.about_me_summary_raw,
+        about_me_summary_raw=resume.about_me_summary_raw,
         experience=resume.experience,
         feedback_raw=resume.feedback_raw,  # полный текст
         feedback_summary=resume.feedback_summary,
@@ -343,6 +344,12 @@ def _json_clip(value, limit: int = 1800) -> str:
     return _clip(json.dumps(value, ensure_ascii=False, default=str), limit)
 
 
+def _review_about_text(cv_data) -> str:
+    if hasattr(cv_data, "about_me_summary_raw"):
+        return cv_data.about_me_summary_raw or cv_data.about_me_summary or ""
+    return cv_data.get("about_me_summary_raw") or cv_data.get("about_me_summary") or ""
+
+
 def _build_review_prompt(
     parsed_cv: dict,
     examples: list[SimilarReviewExample],
@@ -363,7 +370,7 @@ Return ONLY valid JSON matching the requested schema.
 Example {index}
 Role: {_clip(example.role_position, 500)}
 Skills: {_clip(example.skills)}
-About: {_clip(example.about_me_summary)}
+About: {_clip(_review_about_text(example))}
 Experience: {_clip(example.experience)}
 HR feedback summary: {_clip(example.feedback_summary)}
 HR raw feedback: {_clip(example.feedback_raw)}
@@ -383,7 +390,7 @@ New CV to review:
 Full name: {_clip(parsed_cv.get("full_name"), 300)}
 Role: {_clip(parsed_cv.get("role_position"), 500)}
 Skills: {_clip(parsed_cv.get("skills"))}
-About: {_clip(parsed_cv.get("about_me_summary"))}
+About: {_clip(_review_about_text(parsed_cv))}
 Experience: {_clip(parsed_cv.get("experience"), 2800)}
 
 Write a strict, practical CV review in {output_language}.

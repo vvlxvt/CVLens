@@ -108,11 +108,12 @@
   }
 
   function renderParsedCV(parsed) {
+    const aboutText = parsed.about_me_summary_raw || parsed.about_me_summary;
     el("parsedTitle").textContent =
       parsed.full_name || parsed.role_position || "Резюме без названия";
     el("parsedList").innerHTML = [
       listItem("Роль", parsed.role_position),
-      listItem("О себе", parsed.about_me_summary, { mono: true }),
+      listItem("О себе", aboutText, { mono: true }),
       listItem("Навыки", parsed.skills),
       listItem("Опыт", parsed.experience, { mono: true }),
     ].join("");

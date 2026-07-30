@@ -376,9 +376,11 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
             intro_lines = lines  # первый блок без заголовка — преамбула
 
     parsed = {key: "\n".join(val) for key, val in buckets.items()}
-    about_me_summary_raw = parsed.pop("about_me_summary")
+    explicit_about_raw = parsed.pop("about_me_summary")
+    intro_raw = "\n".join(intro_lines).strip()
+    about_me_summary_raw = explicit_about_raw or intro_raw
 
-    intro_text = "\n".join(intro_lines) + "\n" + about_me_summary_raw
+    intro_text = "\n".join(intro_lines) + "\n" + explicit_about_raw
     fields, about_model, about_prompt_id = extract_intro_data(
         intro_text,
         model=PREFERRED_ABOUT_MODEL,
@@ -389,9 +391,7 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
         "about_me_summary_raw": about_me_summary_raw,
         "full_name": fields.get("full_name"),
         "role_position": fields.get("role_position"),
-        # если в CV уже была явная секция about/summary — оставляем её как есть,
-        # LLM-саммари используем только как запасной вариант
-        "about_summary": about_me_summary_raw or fields.get("summary"),
+        "about_summary": fields.get("summary") or about_me_summary_raw,
         "about_llm": about_model,
         "about_prompt_id": about_prompt_id,
     }
