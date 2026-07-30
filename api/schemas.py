@@ -127,6 +127,7 @@ class ParsedCVOut(BaseModel):
     role_position: str = ""
     skills: str = ""
     about_me_summary: str = ""
+    about_me_summary_raw: str = ""
     experience: str = ""
 
 
@@ -138,6 +139,7 @@ class SearchMatchOut(BaseModel):
     role_position: str | None = None
     skills: str | None = None
     about_me_summary: str | None = None
+    about_me_summary_raw: str | None = None
     experience: str | None = None
     feedback_summary: str | None = None
     feedback_raw: str | None = None
