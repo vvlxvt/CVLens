@@ -46,6 +46,7 @@ def list_rule_sets(limit: int = 20) -> list[CVReviewRuleSet]:
 
 def list_diffs(limit: int = 20) -> list[CVReviewRuleDiff]:
     with get_session() as session:
+        _ensure_initial_diff(session)
         rows = (
             session.query(CVReviewRuleDiff)
             .order_by(CVReviewRuleDiff.id.desc())
@@ -54,6 +55,32 @@ def list_diffs(limit: int = 20) -> list[CVReviewRuleDiff]:
         )
         session.expunge_all()
         return rows
+
+
+def _ensure_initial_diff(session) -> None:
+    has_diff = session.query(CVReviewRuleDiff.id).first()
+    if has_diff:
+        return
+
+    first_rule_set = (
+        session.query(CVReviewRuleSet)
+        .order_by(CVReviewRuleSet.id.asc())
+        .first()
+    )
+    if first_rule_set is None:
+        return
+
+    session.add(
+        CVReviewRuleDiff(
+            from_rule_set_id=None,
+            to_rule_set_id=first_rule_set.id,
+            added_rules=first_rule_set.rules or [],
+            changed_rules=[],
+            removed_rules=[],
+            summary=first_rule_set.summary or "Initial rule set",
+        )
+    )
+    session.flush()
 
 
 def create_next_rule_set(
