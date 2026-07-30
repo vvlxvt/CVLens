@@ -1,4 +1,6 @@
 (() => {
+  const params = new URLSearchParams(location.search);
+  const API_BASE_URL = params.get("api") || "";
   const el = (id) => document.getElementById(id);
 
   const fileInput = el("cvFileInput");
@@ -183,7 +185,7 @@
     formData.append("language", currentReviewLanguage);
 
     try {
-      const res = await fetch("/resumes/review", {
+      const res = await fetch(`${API_BASE_URL}/resumes/review`, {
         method: "POST",
         body: formData,
       });
@@ -250,7 +252,7 @@
       feedbackStatus.className = "search-status mt-2 text-muted";
 
       try {
-        const res = await fetch(`/reviews/${currentReviewId}/feedback`, {
+        const res = await fetch(`${API_BASE_URL}/reviews/${currentReviewId}/feedback`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -259,7 +261,10 @@
           }),
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const errorBody = await res.json().catch(() => ({}));
+          throw new Error(errorBody.detail || `HTTP ${res.status}`);
+        }
 
         feedbackRatingButtons.forEach((ratingButton) => {
           ratingButton.classList.toggle("active", ratingButton === button);
@@ -269,7 +274,7 @@
       } catch (err) {
         console.error(err);
         feedbackStatus.textContent =
-          "Не удалось сохранить оценку — попробуй ещё раз.";
+          `Не удалось сохранить оценку: ${err.message}`;
         feedbackStatus.className = "search-status mt-2 text-danger";
       } finally {
         updateFeedbackButtonState();
