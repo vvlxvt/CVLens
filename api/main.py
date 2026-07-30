@@ -32,6 +32,9 @@ from api.schemas import (
     ReviewFeedbackResult,
     ReviewResponse,
     ReviewRuleDiffOut,
+    ReviewRuleGeneration,
+    ReviewRuleRebuildIn,
+    ReviewRuleRebuildResult,
     ReviewRuleSetOut,
     SearchMatchOut,
     SearchResponse,
@@ -119,6 +122,7 @@ def serve_prompts(request: Request):
         context={"request": request},
     )
 
+
 @app.get("/rules")
 def serve_review_rules(request: Request):
     """Serve the review rule evolution page."""
@@ -127,6 +131,7 @@ def serve_review_rules(request: Request):
         name="review_rules.html",
         context={"request": request},
     )
+
 
 @app.get("/search")
 def serve_search(request: Request):
@@ -334,10 +339,15 @@ def _llm_provider_error_detail(error: OpenAIError) -> str:
     return f"LLM provider error ({type(error).__name__}): {error}"
 
 
+def _json_clip(value, limit: int = 1800) -> str:
+    return _clip(json.dumps(value, ensure_ascii=False, default=str), limit)
+
+
 def _build_review_prompt(
     parsed_cv: dict,
     examples: list[SimilarReviewExample],
     language: str = "ru",
+    active_rules: list[dict] | None = None,
 ) -> tuple[str, str]:
     output_language = "English" if language == "en" else "Russian"
     system = """
@@ -365,6 +375,9 @@ Similarity score: {example.score:.4f}
     user = f"""
 Historical HR-reviewed examples:
 {chr(10).join(example_blocks) if example_blocks else "No similar historical examples were found."}
+
+Active review rules:
+{_json_clip(active_rules or [], 2400) if active_rules else "No active review rules yet."}
 
 New CV to review:
 Full name: {_clip(parsed_cv.get("full_name"), 300)}
@@ -397,6 +410,7 @@ Rules:
 - If evidence is missing, mark the relevant section as "missing" or "weak".
 - Be specific and actionable.
 - All human-readable JSON values must be written in {output_language}.
+- Follow active review rules when they are relevant, but do not invent facts.
 """.strip()
 
     return system, user
@@ -449,7 +463,13 @@ async def review_resume(
         if (match := _match_from_point(point))
     ]
 
-    system, prompt = _build_review_prompt(query_case, examples, language=language)
+    active_rule_set = review_rules_repo.get_latest_active()
+    system, prompt = _build_review_prompt(
+        query_case,
+        examples,
+        language=language,
+        active_rules=active_rule_set.rules if active_rule_set else None,
+    )
     try:
         raw_review, applied_model = generate_response(
             prompt,
@@ -655,6 +675,115 @@ def add_review_feedback(review_id: int, body: ReviewFeedbackIn):
     if not updated:
         raise HTTPException(status_code=404, detail=f"Review {review_id!r} not found")
     return ReviewFeedbackResult(updated=True)
+
+
+def _build_rule_rebuild_prompt(
+    current_rules: list[dict],
+    reviewed_cases,
+) -> tuple[str, str]:
+    system = """
+You improve a CV review prompt by distilling user feedback into durable review rules.
+Return ONLY valid JSON matching the requested schema.
+""".strip()
+
+    case_blocks = []
+    for row in reviewed_cases:
+        case_blocks.append(
+            {
+                "review_id": row.id,
+                "rating": row.user_rating,
+                "user_comment": row.user_comment,
+                "parsed_cv": row.parsed_cv,
+                "generated_review": row.review,
+                "similar_examples": row.similar_examples,
+                "llm": row.llm,
+            }
+        )
+
+    user = f"""
+Current active rules:
+{_json_clip(current_rules, 5000)}
+
+Reviewed cases with user feedback:
+{_json_clip(case_blocks, 14000)}
+
+Create the next rule set for future CV reviews.
+
+Return JSON with exactly this shape:
+{{
+  "rules": [
+    {{
+      "title": "short rule name",
+      "description": "specific instruction for future CV reviews",
+      "confidence": 0.0,
+      "source_review_ids": [1, 2]
+    }}
+  ],
+  "added_rules": [{{"title": "...", "description": "...", "confidence": 0.0, "source_review_ids": []}}],
+  "changed_rules": [{{"title": "...", "description": "...", "before": "...", "after": "...", "source_review_ids": []}}],
+  "removed_rules": [{{"title": "...", "reason": "...", "source_review_ids": []}}],
+  "summary": "short summary of the new rule set",
+  "diff_summary": "short git-like summary of what changed"
+}}
+
+Rules:
+- Prefer a small, high-signal rule set over many weak rules.
+- Use agree feedback as confirmation, partially_agree as refinement, disagree as correction.
+- Keep rules actionable and observable from CV text.
+- Do not include rules that require private knowledge unavailable in a CV.
+- confidence is a number from 0 to 1.
+- source_review_ids must reference the provided reviewed cases.
+""".strip()
+    return system, user
+
+
+@app.post("/review-rules/rebuild", response_model=ReviewRuleRebuildResult)
+def rebuild_review_rules(body: ReviewRuleRebuildIn | None = None):
+    options = body or ReviewRuleRebuildIn()
+    reviewed_cases = reviews_repo.list_with_user_feedback(limit=options.limit)
+    if not reviewed_cases:
+        raise HTTPException(
+            status_code=400,
+            detail="No cv_reviews with user_rating and user_comment found",
+        )
+
+    current = review_rules_repo.get_latest_active()
+    current_rules = current.rules if current else []
+    source_review_ids = [row.id for row in reviewed_cases]
+    system, prompt = _build_rule_rebuild_prompt(current_rules, reviewed_cases)
+
+    try:
+        raw_rules, applied_model = generate_response(
+            prompt,
+            json_mode=True,
+            system=system,
+        )
+        generated = ReviewRuleGeneration.model_validate(raw_rules)
+    except OpenAIError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=_llm_provider_error_detail(e),
+        ) from e
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"LLM returned an invalid rule payload: {e}",
+        ) from e
+
+    rule_set = review_rules_repo.create_next_rule_set(
+        rules=generated.rules,
+        source_review_ids=source_review_ids,
+        added_rules=generated.added_rules,
+        changed_rules=generated.changed_rules,
+        removed_rules=generated.removed_rules,
+        summary=generated.summary,
+        diff_summary=generated.diff_summary,
+    )
+    return ReviewRuleRebuildResult(
+        rule_set=rule_set,
+        used_review_count=len(reviewed_cases),
+        llm=applied_model,
+    )
 
 
 @app.get("/review-rules/latest", response_model=ReviewRuleSetOut | None)

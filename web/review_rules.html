@@ -10,8 +10,15 @@
         Версии правил, которые будут улучшать CV-review prompt по накопленной обратной связи.
       </div>
     </div>
-    <span class="status-badge active" id="currentRuleVersion">Загрузка…</span>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <button class="btn btn-accent btn-sm" id="rebuildRulesBtn" type="button">
+        <i class="bi bi-arrow-repeat"></i> Rebuild rules
+      </button>
+      <span class="status-badge active" id="currentRuleVersion">Загрузка…</span>
+    </div>
   </div>
+
+  <div class="search-status mb-3" id="rulesRebuildStatus"></div>
 
   <div id="rulesLoading" class="state-panel">
     <div class="spinner-border text-secondary mb-2" role="status"></div>
