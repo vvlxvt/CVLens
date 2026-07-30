@@ -35,3 +35,18 @@ def add_feedback(review_id: int, user_rating: str, user_comment: str | None) -> 
         row.user_rating = user_rating
         row.user_comment = user_comment
         return True
+
+
+def list_with_user_feedback(limit: int = 50) -> list[CVReview]:
+    """Reviews that can teach the prompt: rating plus a written comment."""
+    with get_session() as session:
+        rows = (
+            session.query(CVReview)
+            .filter(CVReview.user_rating.isnot(None))
+            .filter(CVReview.user_comment.isnot(None))
+            .order_by(CVReview.id.desc())
+            .limit(limit)
+            .all()
+        )
+        session.expunge_all()
+        return rows

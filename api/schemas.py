@@ -211,6 +211,25 @@ class ReviewRuleDiffOut(BaseModel):
     created_at: datetime
 
 
+class ReviewRuleRebuildIn(BaseModel):
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class ReviewRuleGeneration(BaseModel):
+    rules: list[dict] = Field(default_factory=list)
+    added_rules: list[dict] = Field(default_factory=list)
+    changed_rules: list[dict] = Field(default_factory=list)
+    removed_rules: list[dict] = Field(default_factory=list)
+    summary: str = ""
+    diff_summary: str = ""
+
+
+class ReviewRuleRebuildResult(BaseModel):
+    rule_set: ReviewRuleSetOut
+    used_review_count: int
+    llm: str
+
+
 class LlmOptions(BaseModel):
     feedback_models: list[str] = Field(default_factory=list)
     available_models: list[str] = Field(default_factory=list)

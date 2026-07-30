@@ -7,6 +7,8 @@
   const error = el("rulesError");
   const empty = el("rulesEmpty");
   const content = el("rulesContent");
+  const rebuildBtn = el("rebuildRulesBtn");
+  const rebuildStatus = el("rulesRebuildStatus");
 
   function escapeHtml(str) {
     const div = document.createElement("div");
@@ -179,5 +181,37 @@
     }
   }
 
+  async function rebuildRules() {
+    rebuildBtn.disabled = true;
+    rebuildStatus.textContent =
+      "Пересобираем правила по review history... это может занять время.";
+    rebuildStatus.className = "search-status mb-3 text-muted";
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/review-rules/rebuild`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 50 }),
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new Error(errorBody.detail || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      rebuildStatus.textContent =
+        `Готово: ${data.rule_set.version}, ${data.used_review_count} review source(s), модель ${data.llm}.`;
+      rebuildStatus.className = "search-status mb-3 text-success";
+      await loadRules();
+    } catch (err) {
+      console.error(err);
+      rebuildStatus.textContent = `Не удалось пересобрать правила: ${err.message}`;
+      rebuildStatus.className = "search-status mb-3 text-danger";
+    } finally {
+      rebuildBtn.disabled = false;
+    }
+  }
+
+  rebuildBtn.addEventListener("click", rebuildRules);
   loadRules();
 })();
