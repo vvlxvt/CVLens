@@ -744,6 +744,47 @@ Rules:
     return system, user
 
 
+def _normalize_rule_sources(rule: dict, allowed_ids: set[int]) -> dict:
+    normalized = dict(rule)
+    normalized_ids = []
+    for source_id in normalized.get("source_review_ids") or []:
+        try:
+            normalized_id = int(source_id)
+        except (TypeError, ValueError):
+            continue
+        if normalized_id in allowed_ids:
+            normalized_ids.append(normalized_id)
+    normalized["source_review_ids"] = normalized_ids
+    return normalized
+
+
+def _normalize_rule_payload(
+    generated: ReviewRuleGeneration,
+    source_review_ids: list[int],
+) -> ReviewRuleGeneration:
+    allowed_ids = set(source_review_ids)
+    return ReviewRuleGeneration(
+        rules=[
+            _normalize_rule_sources(rule, allowed_ids)
+            for rule in generated.rules
+        ],
+        added_rules=[
+            _normalize_rule_sources(rule, allowed_ids)
+            for rule in generated.added_rules
+        ],
+        changed_rules=[
+            _normalize_rule_sources(rule, allowed_ids)
+            for rule in generated.changed_rules
+        ],
+        removed_rules=[
+            _normalize_rule_sources(rule, allowed_ids)
+            for rule in generated.removed_rules
+        ],
+        summary=generated.summary,
+        diff_summary=generated.diff_summary,
+    )
+
+
 @app.post("/review-rules/rebuild", response_model=ReviewRuleRebuildResult)
 def rebuild_review_rules(body: ReviewRuleRebuildIn | None = None):
     options = body or ReviewRuleRebuildIn()
@@ -766,6 +807,7 @@ def rebuild_review_rules(body: ReviewRuleRebuildIn | None = None):
             system=system,
         )
         generated = ReviewRuleGeneration.model_validate(raw_rules)
+        generated = _normalize_rule_payload(generated, source_review_ids)
     except OpenAIError as e:
         raise HTTPException(
             status_code=502,
@@ -776,6 +818,12 @@ def rebuild_review_rules(body: ReviewRuleRebuildIn | None = None):
             status_code=502,
             detail=f"LLM returned an invalid rule payload: {e}",
         ) from e
+
+    if not generated.rules:
+        raise HTTPException(
+            status_code=502,
+            detail="LLM returned an empty rule set; nothing was saved",
+        )
 
     rule_set = review_rules_repo.create_next_rule_set(
         rules=generated.rules,
