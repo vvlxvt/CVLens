@@ -119,6 +119,14 @@ def serve_prompts(request: Request):
         context={"request": request},
     )
 
+@app.get("/rules")
+def serve_review_rules(request: Request):
+    """Serve the review rule evolution page."""
+    return templates.TemplateResponse(
+        request=request,
+        name="review_rules.html",
+        context={"request": request},
+    )
 
 @app.get("/search")
 def serve_search(request: Request):
