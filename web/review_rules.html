@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}правила review{% endblock %}
+
+{% block rules %}
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h4 class="mb-1">Prompt Evolution</h4>
+      <div class="text-muted">
+        Версии правил, которые будут улучшать CV-review prompt по накопленной обратной связи.
+      </div>
+    </div>
+    <span class="status-badge active" id="currentRuleVersion">Загрузка…</span>
+  </div>
+
+  <div id="rulesLoading" class="state-panel">
+    <div class="spinner-border text-secondary mb-2" role="status"></div>
+    <div>Загружаем правила…</div>
+  </div>
+
+  <div id="rulesError" class="state-panel d-none">
+    <i class="bi bi-exclamation-triangle"></i>
+    <div class="fw-semibold">Не удалось загрузить правила</div>
+  </div>
+
+  <div id="rulesEmpty" class="state-panel d-none">
+    <i class="bi bi-journal-code"></i>
+    <div class="fw-semibold mb-1">Правила ещё не сформированы</div>
+    <div class="small">
+      Когда появится первая версия rule set, здесь будет виден diff: что добавилось,
+      изменилось и удалилось.
+    </div>
+  </div>
+
+  <div id="rulesContent" class="d-none">
+    <div class="row g-4 mb-4">
+      <div class="col-lg-7">
+        <section class="app-panel p-4 h-100">
+          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <h5 class="mb-1">Активные правила</h5>
+              <div class="prompt-meta mb-0" id="latestRuleMeta"></div>
+            </div>
+            <span class="score-badge" id="latestRuleCount"></span>
+          </div>
+          <div class="rule-list" id="latestRuleList"></div>
+        </section>
+      </div>
+
+      <div class="col-lg-5">
+        <section class="app-panel p-4 h-100">
+          <h5 class="mb-3">Версии</h5>
+          <div class="rule-version-list" id="ruleVersionList"></div>
+        </section>
+      </div>
+    </div>
+
+    <section class="app-panel p-4">
+      <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+        <div>
+          <h5 class="mb-1">Diff history</h5>
+          <div class="text-muted small">Git-like история изменений между версиями правил.</div>
+        </div>
+      </div>
+      <div class="rule-diff-list" id="ruleDiffList"></div>
+    </section>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/review_rules.js"></script>
+{% endblock %}
