@@ -482,6 +482,7 @@ async def review_resume(
             prompt,
             json_mode=True,
             system=system,
+            allow_ollama=False,
         )
         review = CVReviewReport.model_validate(raw_review)
     except OpenAIError as e:
@@ -492,7 +493,9 @@ async def review_resume(
     except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=502,
-            detail=f"LLM returned an invalid review payload: {e}",
+            detail=str(e)
+            if "Ollama" in str(e)
+            else f"LLM returned an invalid review payload: {e}",
         ) from e
     review_id = reviews_repo.create(
         uploaded_filename=Path(file.filename or "uploaded_cv.pdf").name,
