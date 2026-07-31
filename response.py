@@ -142,7 +142,13 @@ def _fallback_to_ollama(
     system: str | None,
     failed_provider: str,
     error: Exception,
+    allow_ollama: bool = True,
 ):
+    if not allow_ollama:
+        raise ValueError(
+            f"{failed_provider} failed and Ollama fallback is disabled"
+        ) from error
+
     print(
         f"[response] {failed_provider} failed ({type(error).__name__}: {error}); "
         f"falling back to Ollama ({OLLAMA_MODEL})."
@@ -157,6 +163,7 @@ def _fallback_to_groq_then_ollama(
     system: str | None,
     failed_provider: str,
     error: Exception,
+    allow_ollama: bool = True,
 ):
     global _force_ollama
 
@@ -173,9 +180,16 @@ def _fallback_to_groq_then_ollama(
             print(
                 f"[response] Groq/OpenAI-compatible call failed "
                 f"({type(groq_error).__name__}: {groq_error}); "
-                f"falling back to Ollama ({OLLAMA_MODEL}) for the rest of this run."
+                f"{'falling back to Ollama (' + OLLAMA_MODEL + ')' if allow_ollama else 'Ollama fallback is disabled'} "
+                "for the rest of this run."
             )
-            _force_ollama = True
+            if allow_ollama:
+                _force_ollama = True
+
+    if not allow_ollama:
+        raise ValueError(
+            f"{failed_provider} failed and no cloud fallback was available"
+        ) from error
 
     result = _call_ollama(prompt, json_mode, system)
     return result, OLLAMA_MODEL
@@ -186,6 +200,7 @@ def generate_response(
     json_mode: bool = False,
     system: str | None = None,
     model: str | None = None,
+    allow_ollama: bool = True,
 ):
     """
     Returns (result, applied_model) — the model actually used for THIS call,
@@ -200,6 +215,8 @@ def generate_response(
 
     if model:
         if model == OLLAMA_MODEL or ":" in model:
+            if not allow_ollama:
+                raise ValueError("Ollama model is disabled for this operation")
             result = _call_ollama(prompt, json_mode, system, model=model)
             return result, model
         if model == OPENAI_MODEL:
@@ -213,12 +230,20 @@ def generate_response(
                     system,
                     "Official OpenAI",
                     e,
+                    allow_ollama=allow_ollama,
                 )
         try:
             result = _call_groq(prompt, json_mode, system, model=model)
             return result, model
         except (openai.OpenAIError, ValueError) as e:
-            return _fallback_to_ollama(prompt, json_mode, system, "Groq", e)
+            return _fallback_to_ollama(
+                prompt,
+                json_mode,
+                system,
+                "Groq",
+                e,
+                allow_ollama=allow_ollama,
+            )
 
     if LLM_PROVIDER == "official_openai":
         try:
@@ -231,9 +256,10 @@ def generate_response(
                 system,
                 "Official OpenAI",
                 e,
+                allow_ollama=allow_ollama,
             )
 
-    if LLM_PROVIDER == "openai" and not _force_ollama:
+    if LLM_PROVIDER == "openai" and (not _force_ollama or not allow_ollama):
         try:
             result = _call_groq(prompt, json_mode, system)
             return result, MODEL
@@ -242,7 +268,11 @@ def generate_response(
                 f"[response] Groq/OpenAI call failed ({type(e).__name__}: {e}); "
                 f"falling back to Ollama ({OLLAMA_MODEL}) for the rest of this run."
             )
-            _force_ollama = True
+            if allow_ollama:
+                _force_ollama = True
+
+    if not allow_ollama:
+        raise ValueError("No cloud LLM provider was available and Ollama fallback is disabled")
 
     result = _call_ollama(prompt, json_mode, system)
     return result, OLLAMA_MODEL
