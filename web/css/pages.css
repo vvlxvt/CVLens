@@ -7,6 +7,34 @@
   font-weight: 600;
 }
 
+.review-toolbar .form-control,
+.review-toolbar .btn,
+.review-toolbar .btn-group {
+  height: 42px;
+}
+
+.review-toolbar .btn-group .btn {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.review-toolbar .btn {
+  white-space: nowrap;
+}
+
+.review-toolbar .selected-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-toolbar .selected-file-name a {
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+
 .prompt-editor h5 {
   font-weight: 700;
   margin-bottom: 0.15rem;

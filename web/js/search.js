@@ -5,7 +5,8 @@
 
   const fileInput = el("cvFileInput");
   const chooseFileBtn = el("chooseFileBtn");
-  const selectedFileName = el("selectedFileName");
+  const selectedFileStatus = el("selectedFileStatus");
+  const selectedFileLink = el("selectedFileLink");
   const limitInput = el("limitInput");
   const skillsInput = el("skillsInput");
   const searchBtn = el("searchBtn");
@@ -22,6 +23,7 @@
 
   let currentReviewId = null;
   let currentReviewLanguage = "ru";
+  let selectedFileUrl = null;
 
   const SECTION_LABELS = {
     role_position: "Позиционирование",
@@ -62,15 +64,37 @@
     return ["good", "weak", "missing"].includes(status) ? status : "weak";
   }
 
+  function renderSelectedFile(file) {
+    if (selectedFileUrl) {
+      URL.revokeObjectURL(selectedFileUrl);
+      selectedFileUrl = null;
+    }
+
+    if (!file) {
+      selectedFileStatus.textContent = "Файл не выбран";
+      selectedFileLink.classList.add("d-none");
+      selectedFileLink.removeAttribute("href");
+      selectedFileLink.textContent = "";
+      return;
+    }
+
+    selectedFileUrl = URL.createObjectURL(file);
+    selectedFileStatus.textContent = "Выбран файл: ";
+    selectedFileLink.href = selectedFileUrl;
+    selectedFileLink.textContent = file.name;
+    selectedFileLink.title = "Открыть оригинальный PDF";
+    selectedFileLink.classList.remove("d-none");
+  }
+
   chooseFileBtn.addEventListener("click", () => fileInput.click());
 
   fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
     if (file) {
-      selectedFileName.textContent = file.name;
+      renderSelectedFile(file);
       searchBtn.disabled = false;
     } else {
-      selectedFileName.textContent = "Файл не выбран";
+      renderSelectedFile(null);
       searchBtn.disabled = true;
     }
   });

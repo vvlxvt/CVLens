@@ -1,21 +1,15 @@
 {% extends "base.html" %} {% block title %}отклик по резюме{% endblock %} {% block search %}
-<div class="toolbar app-panel p-3 mb-3">
-  <div class="row g-2 align-items-end">
+<div class="toolbar review-toolbar app-panel p-3 mb-3">
+  <div class="row g-4 align-items-end">
     <div class="col-12 col-md-3">
       <label class="form-label small text-muted mb-1">CV (PDF)</label>
-      <div class="d-flex align-items-center gap-2">
-        <button
-          type="button"
-          class="btn btn-outline-secondary btn-sm"
-          id="chooseFileBtn"
-        >
-          <i class="bi bi-file-earmark-arrow-up"></i> Выбрать CV
-        </button>
-       
-      </div>
-       <span class="selected-file-name d-block mt-1" id="selectedFileName"
-          >Файл не выбран</span
-        >
+      <button
+        type="button"
+        class="btn btn-outline-secondary w-100"
+        id="chooseFileBtn"
+      >
+        <i class="bi bi-file-earmark-arrow-up"></i> Выбрать CV
+      </button>
       <input
         type="file"
         id="cvFileInput"
@@ -50,7 +44,7 @@
 
     <div class="col-6 col-md-2">
       <label class="form-label small text-muted mb-1">Язык</label>
-      <div class="btn-group btn-group-sm language-toggle w-100" role="group" aria-label="Язык отклика">
+      <div class="btn-group language-toggle w-100" role="group" aria-label="Язык отклика">
         <button
           type="button"
           class="btn btn-outline-secondary active"
@@ -73,6 +67,16 @@
         <i class="bi bi-stars"></i> Получить отклик
       </button>
     </div>
+  </div>
+  <div class="selected-file-name mt-2" id="selectedFileName">
+    <span id="selectedFileStatus">Файл не выбран</span>
+    <a
+      class="d-none"
+      href="#"
+      id="selectedFileLink"
+      target="_blank"
+      rel="noopener"
+    ></a>
   </div>
   <div class="search-status mt-2" id="searchStatus"></div>
 </div>
