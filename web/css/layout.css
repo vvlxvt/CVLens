@@ -12,6 +12,20 @@
   color: var(--accent);
 }
 
+.app-nav .btn.active,
+.app-nav .btn[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.app-nav .btn.active:hover,
+.app-nav .btn[aria-current="page"]:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  color: #fff;
+}
+
 @media (max-width: 767.98px) {
   .app-header .container-xl {
     align-items: flex-start !important;

@@ -32,23 +32,23 @@
         class="container-xl d-flex align-items-center justify-content-between"
       >
         <span class="brand"><i class="bi bi-search"></i> CVLens</span>
+        {% set current_path = request.url.path %}
+        {% macro nav_link(href, icon, label) -%}
+          <a
+            href="{{ href }}"
+            class="btn btn-outline-secondary btn-sm{% if current_path == href %} active{% endif %}"
+            {% if current_path == href %}aria-current="page"{% endif %}
+          >
+            <i class="{{ icon }}"></i> {{ label }}
+          </a>
+        {%- endmacro %}
         <nav class="app-nav d-flex align-items-center gap-3">
           {% block header_extra %}{% endblock %}
-          <a href="/search" class="btn btn-outline-secondary btn-sm">
-            <i class="fa-solid fa-magnifying-glass-chart"></i> Отклик по CV
-          </a>
-          <a href="/prompts" class="btn btn-outline-secondary btn-sm">
-            <i class="fa-solid fa-magnifying-glass"></i> Промпты
-          </a>
-          <a href="/rules" class="btn btn-outline-secondary btn-sm">
-            <i class="fa-solid fa-code-compare"></i> Правила
-          </a>
-          <a href="/upload" class="btn btn-outline-secondary btn-sm">
-            <i class="fa-solid fa-folder-plus"></i> Загрузить
-          </a>
-          <a href="/" class="btn btn-outline-secondary btn-sm">
-            <i class="fa-solid fa-list"></i> Список CV
-          </a>
+          {{ nav_link("/upload", "fa-solid fa-folder-plus", "Загрузить") }}
+          {{ nav_link("/", "fa-solid fa-list", "Список CV") }}
+          {{ nav_link("/search", "fa-solid fa-magnifying-glass-chart", "Отклик по CV") }}
+          {{ nav_link("/prompts", "fa-solid fa-magnifying-glass", "Промпты") }}
+          {{ nav_link("/rules", "fa-solid fa-code-compare", "Правила") }}
         </nav>
       </div>
     </header>
