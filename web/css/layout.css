@@ -12,18 +12,40 @@
   color: var(--accent);
 }
 
-.app-nav .btn.active,
-.app-nav .btn[aria-current="page"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.app-nav-link {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  font-size: 0.92rem;
+  font-weight: 700;
+  gap: 0.35rem;
+  padding: 0.35rem 0 0.8rem;
+  position: relative;
+  text-decoration: none;
 }
 
-.app-nav .btn.active:hover,
-.app-nav .btn[aria-current="page"]:hover {
-  background: var(--accent-dark);
-  border-color: var(--accent-dark);
-  color: #fff;
+.app-nav-link::after {
+  background: var(--text-muted);
+  border-radius: 999px;
+  bottom: 0.15rem;
+  content: "";
+  height: 4px;
+  left: 0;
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.app-nav-link:hover::after,
+.app-nav-link.active::after,
+.app-nav-link[aria-current="page"]::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 @media (max-width: 767.98px) {

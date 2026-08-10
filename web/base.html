@@ -36,17 +36,17 @@
         {% macro nav_link(href, icon, label) -%}
           <a
             href="{{ href }}"
-            class="btn btn-outline-secondary btn-sm{% if current_path == href %} active{% endif %}"
+            class="app-nav-link{% if current_path == href %} active{% endif %}"
             {% if current_path == href %}aria-current="page"{% endif %}
           >
             <i class="{{ icon }}"></i> {{ label }}
           </a>
         {%- endmacro %}
-        <nav class="app-nav d-flex align-items-center gap-3">
+        <nav class="app-nav d-flex align-items-center gap-5">
           {% block header_extra %}{% endblock %}
-          {{ nav_link("/upload", "fa-solid fa-folder-plus", "Загрузить") }}
-          {{ nav_link("/", "fa-solid fa-list", "Список CV") }}
-          {{ nav_link("/search", "fa-solid fa-magnifying-glass-chart", "Отклик по CV") }}
+          {{ nav_link("/upload", "fa-solid fa-folder-plus", "Загрузка") }}
+          {{ nav_link("/", "fa-solid fa-list", "База CV") }}
+          {{ nav_link("/search", "fa-solid fa-magnifying-glass-chart", "Анализ CV") }}
           {{ nav_link("/prompts", "fa-solid fa-magnifying-glass", "Промпты") }}
           {{ nav_link("/rules", "fa-solid fa-code-compare", "Правила") }}
         </nav>
