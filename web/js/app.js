@@ -37,10 +37,22 @@
   };
   let currentDetailResumeId = null;
 
+  const DECOMMISSIONED_MODEL_REPLACEMENTS = {
+    "llama-3.3-70b-versatile": "qwen/qwen3.6-27b",
+  };
+
   function escapeHtml(str) {
     const div = document.createElement("div");
     div.textContent = str ?? "";
     return div.innerHTML;
+  }
+
+  function replaceDecommissionedModel(model) {
+    return DECOMMISSIONED_MODEL_REPLACEMENTS[model] || model;
+  }
+
+  function uniqueModels(models) {
+    return [...new Set((models || []).map(replaceDecommissionedModel))];
   }
 
   function sectionTag(section) {
@@ -111,8 +123,8 @@
       const data = await res.json();
       llmOptions = {
         feedbackModels: data.feedback_models || [],
-        availableModels: data.available_models || [],
-        localModel: data.local_model || null,
+        availableModels: uniqueModels(data.available_models),
+        localModel: data.local_model ? replaceDecommissionedModel(data.local_model) : null,
       };
       const select = el("filterLlm");
       const currentValue = select.value;

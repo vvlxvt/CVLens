@@ -28,7 +28,16 @@ official_openai_client = (
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "0"))
 
-MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+DECOMMISSIONED_MODEL_REPLACEMENTS = {
+    "llama-3.3-70b-versatile": "qwen/qwen3.6-27b",
+}
+
+
+def _replace_decommissioned_model(model: str) -> str:
+    return DECOMMISSIONED_MODEL_REPLACEMENTS.get(model, model)
+
+
+MODEL = _replace_decommissioned_model(os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 
@@ -133,7 +142,15 @@ def _call_ollama(
 
 
 def configured_llm_options() -> list[str]:
-    return list(dict.fromkeys([MODEL, OPENAI_MODEL, OLLAMA_MODEL]))
+    return list(
+        dict.fromkeys(
+            [
+                _replace_decommissioned_model(MODEL),
+                OPENAI_MODEL,
+                OLLAMA_MODEL,
+            ]
+        )
+    )
 
 
 def _fallback_to_ollama(
@@ -214,6 +231,7 @@ def generate_response(
     global _force_ollama
 
     if model:
+        model = _replace_decommissioned_model(model)
         if model == OLLAMA_MODEL or ":" in model:
             if not allow_ollama:
                 raise ValueError("Ollama model is disabled for this operation")

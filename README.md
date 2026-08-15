@@ -90,7 +90,7 @@ OLLAMA_NUM_GPU=0
 
 # Groq (used by response.py when LLM_PROVIDER=openai)
 GROQ_API_KEY=your-groq-key
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=qwen/qwen3.6-27b
 
 # OpenAI official API (also appears in the selectable model list)
 OPENAI_API_KEY=your-openai-key
