@@ -8,19 +8,59 @@
 }
 
 .review-toolbar .form-control,
-.review-toolbar .btn,
-.review-toolbar .btn-group {
+.review-toolbar .btn {
   height: 42px;
-}
-
-.review-toolbar .btn-group .btn {
-  align-items: center;
-  display: inline-flex;
-  justify-content: center;
 }
 
 .review-toolbar .btn {
   white-space: nowrap;
+}
+
+.language-toggle {
+  align-items: center;
+  display: flex;
+  gap: 1.25rem;
+  height: 42px;
+}
+
+.language-toggle-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  padding: 0.35rem 0 0.8rem;
+  position: relative;
+}
+
+.language-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0.25rem;
+}
+
+.language-toggle-btn::after {
+  background: var(--text-muted);
+  border-radius: 999px;
+  bottom: 0.15rem;
+  content: "";
+  height: 4px;
+  left: 0;
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.language-toggle-btn:hover::after,
+.language-toggle-btn.active::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .review-toolbar .selected-file-name {
@@ -130,12 +170,6 @@
 }
 
 .review-feedback .btn.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-.language-toggle .btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
