@@ -224,3 +224,5 @@ extract/data/
 extract/__pycache__/
 
 models/
+*.pdf
+resumes*
