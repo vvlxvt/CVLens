@@ -309,9 +309,13 @@
 
     el("candidateList").innerHTML = [
       listItem("Роль", r.role_position),
-      listItem("О себе", r.about_summary),
       listItem("Навыки", r.skills),
       listItem("Опыт", r.experience),
+    ].join("");
+
+    el("aboutList").innerHTML = [
+      listItem("Оригинал", r.about_me_summary_raw),
+      listItem("Саммари (LLM)", r.about_summary),
     ].join("");
 
     el("feedbackList").innerHTML = [
@@ -450,9 +454,11 @@
     if (!currentDetailResumeId || !model) return;
 
     detailRecomputeBtn.disabled = true;
+    detailRecomputeBtn.classList.add("recompute-processing");
+    detailRecomputeBtn.setAttribute("aria-busy", "true");
     detailRecomputeModel.disabled = true;
     detailRecomputeStatus.textContent =
-      "Пересчитываем фидбэк выбранной моделью...";
+      "Пересчитываем about/summary и фидбэк выбранной моделью...";
     detailRecomputeStatus.className = "search-status text-muted";
 
     try {
@@ -471,18 +477,21 @@
       const updatedResume = await res.json();
       await loadLlmOptions();
       renderDetail(updatedResume);
-      detailRecomputeStatus.textContent = `Готово: ${updatedResume.feedback_llm}`;
+      detailRecomputeStatus.textContent =
+        `Готово: about ${updatedResume.about_llm}, feedback ${updatedResume.feedback_llm}`;
       detailRecomputeStatus.className = "search-status text-success";
       loadCards();
     } catch (err) {
       console.error(err);
       const message = err.message.includes("insufficient_quota")
-        ? "Не удалось пересчитать фидбэк: закончилась квота OpenAI API или не настроен billing."
-        : `Не удалось пересчитать фидбэк: ${err.message}`;
+        ? "Не удалось пересчитать CV: закончилась квота OpenAI API или не настроен billing."
+        : `Не удалось пересчитать CV: ${err.message}`;
       detailRecomputeStatus.textContent = message;
       detailRecomputeStatus.className = "search-status text-danger";
     } finally {
       detailRecomputeBtn.disabled = false;
+      detailRecomputeBtn.classList.remove("recompute-processing");
+      detailRecomputeBtn.removeAttribute("aria-busy");
       detailRecomputeModel.disabled = false;
     }
   });

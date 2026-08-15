@@ -51,6 +51,7 @@ from response import (
     OPENAI_MODEL,
     configured_llm_options,
     extract_feedback_data,
+    extract_intro_data,
     generate_response,
 )
 
@@ -613,6 +614,19 @@ def get_resume(resume_id: str):
     return resume
 
 
+def _resume_intro_text(resume) -> str:
+    return "\n".join(
+        part
+        for part in (
+            resume.full_name,
+            resume.role_position,
+            resume.about_me_summary_raw,
+            resume.about_summary,
+        )
+        if part
+    )
+
+
 @app.post("/resumes/{resume_id}/feedback/recompute", response_model=ResumeOut)
 def recompute_resume_feedback(resume_id: str, body: RecomputeFeedbackIn):
     if body.model not in configured_llm_options():
@@ -631,6 +645,10 @@ def recompute_resume_feedback(resume_id: str, body: RecomputeFeedbackIn):
         )
 
     try:
+        about_fields, about_model, about_prompt_id = extract_intro_data(
+            _resume_intro_text(resume),
+            model=body.model,
+        )
         fields, applied_model, prompt_id = extract_feedback_data(
             resume.feedback_raw,
             model=body.model,
@@ -643,8 +661,19 @@ def recompute_resume_feedback(resume_id: str, body: RecomputeFeedbackIn):
     except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=502,
-            detail=f"LLM returned an invalid feedback payload: {e}",
+            detail=f"LLM returned an invalid recompute payload: {e}",
         ) from e
+
+    updated_about = resumes_repo.update_about(
+        resume_id=resume_id,
+        full_name=about_fields.get("full_name") or resume.full_name,
+        role_position=about_fields.get("role_position") or resume.role_position,
+        about_summary=about_fields.get("summary") or resume.about_summary,
+        llm=about_model,
+        prompt_id=about_prompt_id,
+    )
+    if not updated_about:
+        raise HTTPException(status_code=404, detail=f"Resume {resume_id!r} not found")
 
     updated = resumes_repo.update_feedback(
         resume_id=resume_id,

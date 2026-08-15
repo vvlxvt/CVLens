@@ -153,6 +153,39 @@
   min-width: 15rem;
 }
 
+.recompute-processing,
+.recompute-processing:disabled {
+  animation: recompute-gradient 1.4s linear infinite;
+  background-image: linear-gradient(
+    110deg,
+    var(--accent-dark) 0%,
+    var(--accent) 35%,
+    #22c55e 55%,
+    var(--accent) 75%,
+    var(--accent-dark) 100%
+  );
+  background-size: 240% 100%;
+  border-color: transparent;
+  box-shadow: 0 0.4rem 1rem rgb(20 184 166 / 20%);
+  color: #fff;
+  opacity: 1;
+}
+
+.recompute-processing:hover,
+.recompute-processing:focus-visible {
+  color: #fff;
+}
+
+@keyframes recompute-gradient {
+  from {
+    background-position: 240% 0;
+  }
+
+  to {
+    background-position: 0 0;
+  }
+}
+
 .detail-meta-panel {
   background: var(--bg);
   border: 1px solid var(--border);
