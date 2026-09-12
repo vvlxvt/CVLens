@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import requests
 from ast import literal_eval
 
 import openai
@@ -13,7 +14,7 @@ from db import prompts_repo
 load_dotenv(override=True)
 
 groq_api_key = os.getenv("GROQ_API_KEY")
-official_openai_api_key = os.getenv("OPENAI_API_KEY")
+openrouter_api_key = os.getenv("OPEN_ROUTER_KEY")
 
 groq_client = (
     OpenAI(
@@ -23,15 +24,22 @@ groq_client = (
     if groq_api_key
     else None
 )
-official_openai_client = (
-    OpenAI(api_key=official_openai_api_key) if official_openai_api_key else None
+
+# Клиент OpenRouter через стандартный SDK OpenAI
+openrouter_client = (
+    OpenAI(
+        api_key=openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    if openrouter_api_key
+    else None
 )
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "0"))
 
 DECOMMISSIONED_MODEL_REPLACEMENTS = {
-    "llama-3.3-70b-versatile": "qwen/qwen3.6-27b",
+    "llama-3.3-70b-versatile": "qwen/qwen3.8-27b",
 }
 
 
@@ -39,15 +47,13 @@ def _replace_decommissioned_model(model: str) -> str:
     return DECOMMISSIONED_MODEL_REPLACEMENTS.get(model, model)
 
 
-MODEL = _replace_decommissioned_model(os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"))
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.1")
+MODEL = _replace_decommissioned_model(os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"))
+# Актуальная бесплатная модель по умолчанию
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+OPENAI_MODEL = OPENROUTER_MODEL
+
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 
-# Sticky flag: once the cloud provider fails once (rate limit, exhausted
-# quota, auth issue, connection error — anything), assume it's unusable
-# for the rest of this process and go straight to Ollama from then on.
-# Without this, every subsequent call would re-attempt (and wait on) a
-# provider that's already known to be down, slowing everything down.
 _force_ollama = False
 
 
@@ -151,11 +157,12 @@ def _call_groq(
     })
 
     kwargs = {
-        "model": model or MODEL,
-        "messages": messages,
-        "temperature": 0,
-        "reasoning_effort": "none",
-    }
+            "model": model or MODEL,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": 800,  # Ограничиваем генерацию, чтобы влезть в лимит 1000 OTPM
+            "reasoning_effort": "none",
+        }
 
     if json_mode:
         kwargs["response_format"] = {
@@ -200,37 +207,108 @@ def _call_groq_with_json_retry(
         print("===== END RAW RESPONSE =====\n")
 
         return _parse_json_content(content)
-    
 
 
-def _call_openai(
+# Список заведомо нерабочих или платных моделей для исключения
+BLOCKED_FREE_MODELS = {
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
+    "deepseek/deepseek-r1:free",
+}
+
+# Гарантированно работающие бесплатные текстовые модели
+DEFAULT_FREE_MODELS = [
+    "google/gemma-2-9b-it:free",
+    "qwen/qwen-2-7b-instruct:free",
+    "mistralai/mistral-7b-instruct:free",
+    "openrouter/auto",
+]
+
+
+def get_active_free_openrouter_models() -> list[str]:
+    """Запрашивает актуальный список бесплатных моделей OpenRouter и фильтрует устаревшие."""
+    try:
+        response = requests.get("https://openrouter.ai/api/v1/models", timeout=5)
+        if response.status_code == 200:
+            data = response.json().get("data", [])
+            free_models = [
+                m["id"]
+                for m in data
+                if (
+                    m["id"].endswith(":free")
+                    or (
+                        m.get("pricing", {}).get("prompt") == "0"
+                        and m.get("pricing", {}).get("completion") == "0"
+                    )
+                )
+                and m["id"] not in BLOCKED_FREE_MODELS
+            ]
+            if free_models:
+                return free_models
+    except Exception as e:
+        print(f"[response] Failed to fetch dynamic free models: {e}")
+
+    return DEFAULT_FREE_MODELS
+
+
+def _call_openrouter(
     prompt: str,
     json_mode: bool,
     system: str | None,
     model: str | None = None,
 ):
-    if not official_openai_api_key:
-        raise ValueError("OPENAI_API_KEY is missing")
-    if official_openai_client is None:
-        raise ValueError("OpenAI client is not configured")
+    if not openrouter_api_key:
+        raise ValueError("OPEN_ROUTER_KEY is missing")
+    if openrouter_client is None:
+        raise ValueError("OpenRouter client is not configured")
 
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+
+    user_content = prompt
+    if json_mode:
+        user_content += "\n\nIMPORTANT: Respond strictly in valid JSON format."
+
+    messages.append({"role": "user", "content": user_content})
 
     kwargs = {
-        "model": model or OPENAI_MODEL,
         "messages": messages,
         "temperature": 0,
     }
-    if json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
 
-    response = official_openai_client.chat.completions.create(**kwargs)
-    content = response.choices[0].message.content
-    return _parse_json_content(content) if json_mode else content
+    # Формируем список кандидатов для последовательного перебора
+    candidate_models = []
+    if model and model not in BLOCKED_FREE_MODELS:
+        candidate_models.append(model)
 
+    active_free = get_active_free_openrouter_models()
+    for m in active_free:
+        if m not in candidate_models:
+            candidate_models.append(m)
+
+    if "openrouter/auto" not in candidate_models:
+        candidate_models.append("openrouter/auto")
+
+    last_exception = None
+
+    for current_model in candidate_models:
+        try:
+            kwargs["model"] = current_model
+            response = openrouter_client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+
+            parsed = _parse_json_content(content) if json_mode else content
+            return parsed, current_model
+        except Exception as e:
+            print(
+                f"[response] OpenRouter model '{current_model}' failed "
+                f"({type(e).__name__}: {e}). Trying fallback..."
+            )
+            last_exception = e
+
+    raise last_exception or ValueError("All OpenRouter models failed")
 
 def _call_ollama(
     prompt: str,
@@ -271,7 +349,7 @@ def configured_llm_options() -> list[str]:
         dict.fromkeys(
             [
                 _replace_decommissioned_model(MODEL),
-                OPENAI_MODEL,
+                OPENROUTER_MODEL,
                 OLLAMA_MODEL,
             ]
         )
@@ -344,34 +422,25 @@ def generate_response(
     model: str | None = None,
     allow_ollama: bool = True,
 ):
-    """
-    Returns (result, applied_model) — the model actually used for THIS call,
-    since a run can start on Groq/OpenAI and fall back to Ollama partway
-    through if the cloud provider runs out of tokens/quota.
-
-    If LLM_PROVIDER="official_openai", uses the user's OpenAI API key.
-    If LLM_PROVIDER="openai", keeps the historical Groq/OpenAI-compatible
-    path and falls back to Ollama after the first provider failure.
-    """
     global _force_ollama
 
     if model:
         model = _replace_decommissioned_model(model)
-        if model == OLLAMA_MODEL or ":" in model:
+        if model == OLLAMA_MODEL or ":" in model and not model.endswith(":free"):
             if not allow_ollama:
                 raise ValueError("Ollama model is disabled for this operation")
             result = _call_ollama(prompt, json_mode, system, model=model)
             return result, model
-        if model == OPENAI_MODEL:
+        if model == OPENROUTER_MODEL or model.endswith(":free"):
             try:
-                result = _call_openai(prompt, json_mode, system, model=model)
-                return result, model
+                result, used_model = _call_openrouter(prompt, json_mode, system, model=model)
+                return result, used_model
             except (openai.OpenAIError, ValueError) as e:
                 return _fallback_to_groq_then_ollama(
                     prompt,
                     json_mode,
                     system,
-                    "Official OpenAI",
+                    "OpenRouter",
                     e,
                     allow_ollama=allow_ollama,
                 )
@@ -388,16 +457,16 @@ def generate_response(
                 allow_ollama=allow_ollama,
             )
 
-    if LLM_PROVIDER == "official_openai":
+    if LLM_PROVIDER in ("openrouter", "official_openai"):
         try:
-            result = _call_openai(prompt, json_mode, system)
-            return result, OPENAI_MODEL
+            result, used_model = _call_openrouter(prompt, json_mode, system)
+            return result, used_model
         except (openai.OpenAIError, ValueError) as e:
             return _fallback_to_groq_then_ollama(
                 prompt,
                 json_mode,
                 system,
-                "Official OpenAI",
+                "OpenRouter",
                 e,
                 allow_ollama=allow_ollama,
             )
@@ -425,11 +494,6 @@ def generate_response(
 
 
 def _load_prompt(name: str):
-    """Fetches the current (latest) prompt version for `name` from the DB.
-    Prompts are managed via the web form (POST /prompts/{name}) — there is
-    no hardcoded fallback here on purpose, so editing a prompt in the DB is
-    the single source of truth. Run `python -m db.seed_prompts` once on a
-    fresh DB to seed the initial versions."""
     prompt = prompts_repo.get_latest(name)
     if prompt is None:
         raise RuntimeError(
@@ -451,7 +515,6 @@ def extract_intro_data(
     model: str | None = None,
     allow_ollama: bool = True,
 ):
-    """Returns (fields_dict, applied_model, prompt_id)."""
     system, user, prompt_id = build_intro_prompt(intro_lines)
     result, applied_model = generate_response(
         user,
@@ -480,7 +543,6 @@ def extract_feedback_data(
     model: str | None = None,
     allow_ollama: bool = True,
 ):
-    """Returns (fields_dict, applied_model, prompt_id)."""
     system, user, prompt_id = build_feedback_prompt(feedback_text)
     result, applied_model = generate_response(
         user,
