@@ -280,7 +280,28 @@ def _parse_uploaded_query_cv(file: UploadFile, content: bytes) -> dict:
         try:
             return vector_search.parse_query_cv(tmp_path)
         except ValueError as e:
+            if _is_llm_error_message(str(e)):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not parse CV with the configured LLMs: {e}",
+                ) from e
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _is_llm_error_message(message: str) -> bool:
+    return any(
+        marker in message
+        for marker in (
+            "LLM",
+            "OpenAI",
+            "Groq",
+            "Ollama",
+            "JSON",
+            "cloud fallback",
+            "fallback is disabled",
+            "quota",
+        )
+    )
 
 
 @app.post("/resumes/search", response_model=SearchResponse)
@@ -424,6 +445,53 @@ Rules:
     return system, user
 
 
+def _generate_structured_review(prompt: str, system: str) -> tuple[CVReviewReport, str]:
+    raw_review, applied_model = generate_response(
+        prompt,
+        json_mode=True,
+        system=system,
+        allow_ollama=False,
+    )
+    try:
+        return CVReviewReport.model_validate(raw_review), applied_model
+    except ValidationError as first_error:
+        retry_prompt = f"""
+Your previous response did not match the required schema.
+It was:
+{_json_clip(raw_review, 1600)}
+
+Return ONLY one JSON object, not an array and not a list of strings.
+The object must match exactly this shape:
+{{
+  "summary": "short overall assessment",
+  "score": 0,
+  "sections": {{
+    "role_position": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "skills": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "about_me_summary": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "experience": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}},
+    "formatting": {{"status": "good|weak|missing", "comment": "...", "suggestion": "..."}}
+  }},
+  "risks": ["..."],
+  "recommended_actions": ["..."]
+}}
+
+Original task:
+{prompt}
+""".strip()
+        retry_raw_review, retry_model = generate_response(
+            retry_prompt,
+            json_mode=True,
+            system=system,
+            model=applied_model,
+            allow_ollama=False,
+        )
+        try:
+            return CVReviewReport.model_validate(retry_raw_review), retry_model
+        except ValidationError as retry_error:
+            raise retry_error from first_error
+
+
 @app.post("/resumes/review", response_model=ReviewResponse)
 async def review_resume(
     file: Annotated[
@@ -479,13 +547,7 @@ async def review_resume(
         active_rules=active_rule_set.rules if active_rule_set else None,
     )
     try:
-        raw_review, applied_model = generate_response(
-            prompt,
-            json_mode=True,
-            system=system,
-            allow_ollama=False,
-        )
-        review = CVReviewReport.model_validate(raw_review)
+        review, applied_model = _generate_structured_review(prompt, system)
     except OpenAIError as e:
         raise HTTPException(
             status_code=502,

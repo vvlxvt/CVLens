@@ -216,10 +216,14 @@ def build_skills_filter(skills: list[str] | None) -> Filter | None:
     )
 
 
-def parse_query_cv(pdf_path: Path) -> dict:
+def parse_query_cv(pdf_path: Path, allow_ollama: bool = False) -> dict:
     """Parses a not-yet-indexed CV for a search query — no DB write, this
     is just for building the query embedding."""
-    sections = parse_cv_sections(pdf_path.name, data_dir=pdf_path.parent)
+    sections = parse_cv_sections(
+        pdf_path.name,
+        data_dir=pdf_path.parent,
+        allow_ollama=allow_ollama,
+    )
     if sections.get("noeng"):
         raise ValueError("CV must be in English (>= 90% Latin characters in header)")
 
