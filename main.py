@@ -36,10 +36,19 @@ OLLAMA_MODEL = "llama3.2:3b"
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+openrouter_api_key = os.getenv("OPEN_ROUTER_KEY")
+openrouter_model = os.getenv(
+    "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"
+)
 
-openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
+openrouter_client = (
+    OpenAI(
+        api_key=openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    if openrouter_api_key
+    else None
+)
 
 KNOWLEDGE_DIR = "knowledge"
 DEFAULT_SOURCE = "english.txt"
@@ -192,15 +201,15 @@ def search_context(query, limit=5, source=DEFAULT_SOURCE):
 
 def generate_response(prompt: str) -> str:
     """
-    Unified LLM interface: Ollama (default) or OpenAI.
+    Unified LLM interface: Ollama (default) or OpenRouter.
     """
 
-    if LLM_PROVIDER == "openai":
-        if not openai_client:
-            raise ValueError("OPENAI_API_KEY is missing")
+    if LLM_PROVIDER in ("openrouter", "openai"):
+        if not openrouter_client:
+            raise ValueError("OPEN_ROUTER_KEY is missing")
 
-        response = openai_client.chat.completions.create(
-            model=openai_model, messages=[{"role": "user", "content": prompt}]
+        response = openrouter_client.chat.completions.create(
+            model=openrouter_model, messages=[{"role": "user", "content": prompt}]
         )
 
         return response.choices[0].message.content

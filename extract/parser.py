@@ -13,7 +13,7 @@ from response import (
     LLM_PROVIDER,
     MODEL,
     OLLAMA_MODEL,
-    OPENAI_MODEL,
+    OPENROUTER_MODEL,
     extract_feedback_data,
     extract_intro_data,
 )
@@ -34,7 +34,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 # each DB row (about_llm/feedback_llm) always reflects what really ran for
 # that call, which can differ if generate_response() falls back.
 PREFERRED_MODEL = {
-    "official_openai": OPENAI_MODEL,
+    "openrouter": OPENROUTER_MODEL,
     "openai": MODEL,
 }.get(LLM_PROVIDER, OLLAMA_MODEL)
 PREFERRED_ABOUT_MODEL = PREFERRED_MODEL

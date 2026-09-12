@@ -48,7 +48,7 @@ from response import (
     LLM_PROVIDER,
     MODEL,
     OLLAMA_MODEL,
-    OPENAI_MODEL,
+    OPENROUTER_MODEL,
     configured_llm_options,
     extract_feedback_data,
     extract_intro_data,
@@ -657,7 +657,7 @@ def get_llm_options():
     feedback_models = resumes_repo.list_feedback_llms()
     available_models = configured_llm_options()
     preferred_model = {
-        "official_openai": OPENAI_MODEL,
+        "official_openai": OPENROUTER_MODEL,
         "openai": MODEL,
     }.get(LLM_PROVIDER, OLLAMA_MODEL)
     return LlmOptions(
