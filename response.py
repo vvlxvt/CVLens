@@ -1,5 +1,7 @@
 import json
 import os
+import re
+from ast import literal_eval
 
 import openai
 from dotenv import load_dotenv
@@ -49,6 +51,80 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
 _force_ollama = False
 
 
+def _parse_json_content(content: str):
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("Empty response from LLM")
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text).strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as first_error:
+        starts = [
+            index
+            for index, char in enumerate(text)
+            if char in {"{", "["}
+        ]
+        decoder = json.JSONDecoder()
+        for start in starts:
+            candidate = text[start:]
+            try:
+                result, _ = decoder.raw_decode(candidate)
+                return result
+            except json.JSONDecodeError:
+                pass
+
+            literal_candidate = _balanced_literal_candidate(text, start)
+            if literal_candidate is None:
+                continue
+            try:
+                result = literal_eval(literal_candidate)
+            except (SyntaxError, ValueError):
+                continue
+            if isinstance(result, dict | list):
+                return result
+
+        raise ValueError("LLM response did not contain valid JSON") from first_error
+
+
+def _balanced_literal_candidate(text: str, start: int) -> str | None:
+    opening = text[start]
+    closing_by_opening = {"{": "}", "[": "]"}
+    if opening not in closing_by_opening:
+        return None
+
+    stack = [closing_by_opening[opening]]
+    quote: str | None = None
+    escaped = False
+    for index in range(start + 1, len(text)):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in closing_by_opening:
+            stack.append(closing_by_opening[char])
+            continue
+        if stack and char == stack[-1]:
+            stack.pop()
+            if not stack:
+                return text[start:index + 1]
+    return None
+
+
 def _call_groq(
     prompt: str,
     json_mode: bool,
@@ -57,25 +133,74 @@ def _call_groq(
 ):
     if not groq_api_key:
         raise ValueError("GROQ_API_KEY is missing")
+
     if groq_client is None:
         raise ValueError("Groq client is not configured")
 
     messages = []
+
     if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+        messages.append({
+            "role": "system",
+            "content": system
+        })
+
+    messages.append({
+        "role": "user",
+        "content": prompt
+    })
 
     kwargs = {
         "model": model or MODEL,
         "messages": messages,
         "temperature": 0,
+        "reasoning_effort": "none",
     }
+
     if json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
+        kwargs["response_format"] = {
+            "type": "json_object"
+        }
 
     response = groq_client.chat.completions.create(**kwargs)
+
     content = response.choices[0].message.content
-    return json.loads(content) if json_mode else content
+
+    return _parse_json_content(content) if json_mode else content
+
+
+def _is_groq_json_validation_error(error: Exception) -> bool:
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        error_body = body.get("error", body)
+        if error_body.get("code") == "json_validate_failed":
+            return True
+    return "json_validate_failed" in str(error)
+
+
+def _call_groq_with_json_retry(
+    prompt: str,
+    json_mode: bool,
+    system: str | None,
+    model: str | None = None,
+):
+    try:
+        return _call_groq(prompt, json_mode, system, model=model)
+    except openai.BadRequestError as e:
+        if not json_mode or not _is_groq_json_validation_error(e):
+            raise
+
+        print(
+            "[response] Groq JSON response_format validation failed; "
+            "retrying without provider-enforced JSON mode."
+        )
+        content = _call_groq(prompt, False, system, model=model)
+        print("\n===== RAW GROQ RESPONSE =====")
+        print(content)
+        print("===== END RAW RESPONSE =====\n")
+
+        return _parse_json_content(content)
+    
 
 
 def _call_openai(
@@ -104,7 +229,7 @@ def _call_openai(
 
     response = official_openai_client.chat.completions.create(**kwargs)
     content = response.choices[0].message.content
-    return json.loads(content) if json_mode else content
+    return _parse_json_content(content) if json_mode else content
 
 
 def _call_ollama(
@@ -138,7 +263,7 @@ def _call_ollama(
     if not content or not content.strip():
         raise ValueError("Empty response from LLM")
 
-    return json.loads(content.strip()) if json_mode else content.strip()
+    return _parse_json_content(content) if json_mode else content.strip()
 
 
 def configured_llm_options() -> list[str]:
@@ -191,7 +316,7 @@ def _fallback_to_groq_then_ollama(
 
     if groq_api_key and not _force_ollama:
         try:
-            result = _call_groq(prompt, json_mode, system)
+            result = _call_groq_with_json_retry(prompt, json_mode, system)
             return result, MODEL
         except (openai.OpenAIError, ValueError) as groq_error:
             print(
@@ -251,7 +376,7 @@ def generate_response(
                     allow_ollama=allow_ollama,
                 )
         try:
-            result = _call_groq(prompt, json_mode, system, model=model)
+            result = _call_groq_with_json_retry(prompt, json_mode, system, model=model)
             return result, model
         except (openai.OpenAIError, ValueError) as e:
             return _fallback_to_ollama(
@@ -279,15 +404,18 @@ def generate_response(
 
     if LLM_PROVIDER == "openai" and (not _force_ollama or not allow_ollama):
         try:
-            result = _call_groq(prompt, json_mode, system)
+            result = _call_groq_with_json_retry(prompt, json_mode, system)
             return result, MODEL
-        except openai.OpenAIError as e:
+        except (openai.OpenAIError, ValueError) as e:
+            if not allow_ollama:
+                raise ValueError(
+                    "Groq/OpenAI call failed and Ollama fallback is disabled"
+                ) from e
             print(
                 f"[response] Groq/OpenAI call failed ({type(e).__name__}: {e}); "
                 f"falling back to Ollama ({OLLAMA_MODEL}) for the rest of this run."
             )
-            if allow_ollama:
-                _force_ollama = True
+            _force_ollama = True
 
     if not allow_ollama:
         raise ValueError("No cloud LLM provider was available and Ollama fallback is disabled")
@@ -318,7 +446,11 @@ def build_intro_prompt(intro_text: str) -> tuple[str, str, int]:
     return prompt.system_text, user, prompt.id
 
 
-def extract_intro_data(intro_lines: str, model: str | None = None):
+def extract_intro_data(
+    intro_lines: str,
+    model: str | None = None,
+    allow_ollama: bool = True,
+):
     """Returns (fields_dict, applied_model, prompt_id)."""
     system, user, prompt_id = build_intro_prompt(intro_lines)
     result, applied_model = generate_response(
@@ -326,6 +458,7 @@ def extract_intro_data(intro_lines: str, model: str | None = None):
         json_mode=True,
         system=system,
         model=model,
+        allow_ollama=allow_ollama,
     )
     return result, applied_model, prompt_id
 
@@ -342,7 +475,11 @@ def build_feedback_prompt(feedback_text: str) -> tuple[str, str, int]:
     return prompt.system_text, user, prompt.id
 
 
-def extract_feedback_data(feedback_text: str, model: str | None = None):
+def extract_feedback_data(
+    feedback_text: str,
+    model: str | None = None,
+    allow_ollama: bool = True,
+):
     """Returns (fields_dict, applied_model, prompt_id)."""
     system, user, prompt_id = build_feedback_prompt(feedback_text)
     result, applied_model = generate_response(
@@ -350,5 +487,6 @@ def extract_feedback_data(feedback_text: str, model: str | None = None):
         json_mode=True,
         system=system,
         model=model,
+        allow_ollama=allow_ollama,
     )
     return result, applied_model, prompt_id

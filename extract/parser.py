@@ -29,13 +29,16 @@ INPUT_PATH = DATA_DIR / "result.json"
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
-# What SHOULD be used if the preferred provider is healthy — used only to
+# What SHOULD be used if the configured provider is healthy — used only to
 # detect staleness (see _is_up_to_date). The model actually recorded on
 # each DB row (about_llm/feedback_llm) always reflects what really ran for
-# that call, which can differ if generate_response() falls back. About/summary
-# extraction is strongest-first; feedback keeps the configured provider policy.
-PREFERRED_ABOUT_MODEL = OPENAI_MODEL
-PREFERRED_FEEDBACK_MODEL = MODEL if LLM_PROVIDER == "openai" else OLLAMA_MODEL
+# that call, which can differ if generate_response() falls back.
+PREFERRED_MODEL = {
+    "official_openai": OPENAI_MODEL,
+    "openai": MODEL,
+}.get(LLM_PROVIDER, OLLAMA_MODEL)
+PREFERRED_ABOUT_MODEL = PREFERRED_MODEL
+PREFERRED_FEEDBACK_MODEL = PREFERRED_MODEL
 
 ADMINS = {
     "Aleksandr Valuev",
@@ -325,7 +328,11 @@ def detect_section(line: str) -> str | None:
     return None
 
 
-def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
+def parse_cv_sections(
+    file_url: str,
+    data_dir: Path = DATA_DIR,
+    allow_ollama: bool = True,
+) -> dict:
     """
     Разбирает PDF на секции. Возвращает поля, готовые лечь в таблицу resumes:
         experience, skills, about_me_summary_raw,
@@ -384,6 +391,7 @@ def parse_cv_sections(file_url: str, data_dir: Path = DATA_DIR) -> dict:
     fields, about_model, about_prompt_id = extract_intro_data(
         intro_text,
         model=PREFERRED_ABOUT_MODEL,
+        allow_ollama=allow_ollama,
     )  # ({full_name, role_position, summary}, model, prompt_id)
 
     return {
