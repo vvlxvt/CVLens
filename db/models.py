@@ -1,8 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
-    Column,
     DateTime,
     ForeignKey,
     Index,
@@ -11,9 +10,19 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
+
+
+def utcnow() -> datetime:
+    """Naive UTC timestamp - SQLite's DateTime column stores no tz info."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+ALLOWED_SECTIONS = ("role_position", "skills", "about_me_summary", "experience", "formatting")
 
 
 class Prompt(Base):
@@ -26,14 +35,13 @@ class Prompt(Base):
 
     __tablename__ = "prompts"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(
-        String, nullable=False
-    )  # e.g. 'intro_extraction', 'feedback_extraction'
-    version = Column(String, nullable=False)  # e.g. 'v1', 'v2', '2026-07-07'
-    system_text = Column(Text, nullable=False)
-    user_template = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # e.g. 'intro_extraction', 'feedback_extraction'
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)  # e.g. 'v1', 'v2'
+    system_text: Mapped[str] = mapped_column(Text, nullable=False)
+    user_template: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("name", "version", name="uq_prompts_name_version"),
@@ -54,38 +62,41 @@ class Resume(Base):
 
     __tablename__ = "resumes"
 
-    id = Column(Integer, primary_key=True)
-    resume_id = Column(
-        String, unique=True, nullable=False, index=True
-    )  # external/source id (matches Qdrant point id)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # external/source id (matches Qdrant point id)
+    resume_id: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
 
     # raw parsed CV sections
-    experience = Column(Text)
-    skills = Column(Text)
-    about_me_summary_raw = Column(Text)  # raw "about me" text as parsed from CV
-    # role_position_raw = Column(String)  # raw role/title as parsed from CV
+    experience: Mapped[str | None] = mapped_column(Text)
+    skills: Mapped[str | None] = mapped_column(Text)
+    # raw "about me" text as parsed from CV
+    about_me_summary_raw: Mapped[str | None] = mapped_column(Text)
 
     # LLM-derived: intro/header extraction (full_name, role_position, summary)
-    full_name = Column(String)
-    role_position = Column(String)
-    about_summary = Column(Text)  # LLM-generated 1-2 sentence summary
-    about_llm = Column(String, index=True)  # model used for about/intro extraction
-    about_prompt_id = Column(Integer, ForeignKey("prompts.id"), index=True)
-    about_prompt = relationship("Prompt", foreign_keys=[about_prompt_id])
+    full_name: Mapped[str | None] = mapped_column(String)
+    role_position: Mapped[str | None] = mapped_column(String)
+    # LLM-generated 1-2 sentence summary
+    about_summary: Mapped[str | None] = mapped_column(Text)
+    # model used for about/intro extraction
+    about_llm: Mapped[str | None] = mapped_column(String, index=True)
+    about_prompt_id: Mapped[int | None] = mapped_column(ForeignKey("prompts.id"), index=True)
+    about_prompt: Mapped["Prompt | None"] = relationship("Prompt", foreign_keys=[about_prompt_id])
 
     # raw recruiter feedback + LLM-derived extraction
-    feedback_raw = Column(Text)  # original recruiter feedback text
-    feedback_summary = Column(Text)  # LLM-generated 1-2 line summary
-    feedback_sections = Column(
-        JSON(none_as_null=True)
-    )  # list[str] or None, e.g. ["skills", "experience"]
-    feedback_llm = Column(String, index=True)  # model used for feedback extraction
-    feedback_prompt_id = Column(Integer, ForeignKey("prompts.id"), index=True)
-    feedback_prompt = relationship("Prompt", foreign_keys=[feedback_prompt_id])
+    feedback_raw: Mapped[str | None] = mapped_column(Text)  # original recruiter feedback text
+    feedback_summary: Mapped[str | None] = mapped_column(Text)  # LLM-generated 1-2 line summary
+    # list[str] or None, e.g. ["skills", "experience"]
+    feedback_sections: Mapped[list | None] = mapped_column(JSON(none_as_null=True))
+    # model used for feedback extraction
+    feedback_llm: Mapped[str | None] = mapped_column(String, index=True)
+    feedback_prompt_id: Mapped[int | None] = mapped_column(ForeignKey("prompts.id"), index=True)
+    feedback_prompt: Mapped["Prompt | None"] = relationship(
+        "Prompt", foreign_keys=[feedback_prompt_id]
+    )
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
     )
 
     __table_args__ = (
@@ -109,15 +120,17 @@ class CVReview(Base):
 
     __tablename__ = "cv_reviews"
 
-    id = Column(Integer, primary_key=True)
-    uploaded_filename = Column(String)
-    parsed_cv = Column(JSON(none_as_null=True), nullable=False)
-    similar_examples = Column(JSON(none_as_null=True), nullable=False)
-    review = Column(JSON(none_as_null=True), nullable=False)
-    llm = Column(String, index=True)
-    user_rating = Column(String, index=True)
-    user_comment = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uploaded_filename: Mapped[str | None] = mapped_column(String)
+    parsed_cv: Mapped[dict] = mapped_column(JSON(none_as_null=True), nullable=False)
+    similar_examples: Mapped[list] = mapped_column(JSON(none_as_null=True), nullable=False)
+    review: Mapped[dict] = mapped_column(JSON(none_as_null=True), nullable=False)
+    llm: Mapped[str | None] = mapped_column(String, index=True)
+    user_rating: Mapped[str | None] = mapped_column(String, index=True)
+    user_comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, nullable=False, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<CVReview id={self.id} uploaded_filename={self.uploaded_filename!r}>"
@@ -134,13 +147,15 @@ class CVReviewRuleSet(Base):
 
     __tablename__ = "cv_review_rule_sets"
 
-    id = Column(Integer, primary_key=True)
-    version = Column(String, unique=True, nullable=False, index=True)
-    rules = Column(JSON(none_as_null=True), nullable=False)
-    source_review_ids = Column(JSON(none_as_null=True), nullable=False)
-    summary = Column(Text)
-    status = Column(String, nullable=False, default="active", index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    rules: Mapped[list] = mapped_column(JSON(none_as_null=True), nullable=False)
+    source_review_ids: Mapped[list] = mapped_column(JSON(none_as_null=True), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, nullable=False, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<CVReviewRuleSet id={self.id} version={self.version!r}>"
@@ -156,25 +171,26 @@ class CVReviewRuleDiff(Base):
 
     __tablename__ = "cv_review_rule_diffs"
 
-    id = Column(Integer, primary_key=True)
-    from_rule_set_id = Column(Integer, ForeignKey("cv_review_rule_sets.id"))
-    to_rule_set_id = Column(
-        Integer,
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    from_rule_set_id: Mapped[int | None] = mapped_column(ForeignKey("cv_review_rule_sets.id"))
+    to_rule_set_id: Mapped[int] = mapped_column(
         ForeignKey("cv_review_rule_sets.id"),
         nullable=False,
         index=True,
     )
-    added_rules = Column(JSON(none_as_null=True), nullable=False)
-    changed_rules = Column(JSON(none_as_null=True), nullable=False)
-    removed_rules = Column(JSON(none_as_null=True), nullable=False)
-    summary = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    added_rules: Mapped[list] = mapped_column(JSON(none_as_null=True), nullable=False)
+    changed_rules: Mapped[list] = mapped_column(JSON(none_as_null=True), nullable=False)
+    removed_rules: Mapped[list] = mapped_column(JSON(none_as_null=True), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, nullable=False, index=True
+    )
 
-    from_rule_set = relationship(
+    from_rule_set: Mapped["CVReviewRuleSet | None"] = relationship(
         "CVReviewRuleSet",
         foreign_keys=[from_rule_set_id],
     )
-    to_rule_set = relationship(
+    to_rule_set: Mapped["CVReviewRuleSet"] = relationship(
         "CVReviewRuleSet",
         foreign_keys=[to_rule_set_id],
     )

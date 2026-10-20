@@ -1,15 +1,16 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from db.resumes_repo import ALLOWED_SECTIONS
+from db.models import ALLOWED_SECTIONS
 
 
-class ResumeIn(BaseModel):
+class ResumeBase(BaseModel):
     """
-    Shape of a single parsed+processed resume row. No longer the upload
-    payload (see TelegramExportIn) — this is the base for ResumeOut, i.e.
-    what a DB row looks like when returned by GET endpoints.
+    Shape of a single parsed+processed resume row. Not an upload payload
+    (see TelegramExportIn) — this is the base for ResumeOut, i.e. what a DB
+    row looks like when returned by GET endpoints.
     """
 
     resume_id: str
@@ -17,7 +18,6 @@ class ResumeIn(BaseModel):
     experience: str | None = None
     skills: str | None = None
     about_me_summary_raw: str | None = None
-    role_position_raw: str | None = None
 
     full_name: str | None = None
     role_position: str | None = None
@@ -33,7 +33,7 @@ class ResumeIn(BaseModel):
 
     @field_validator("feedback_sections")
     @classmethod
-    def validate_sections(cls, value):
+    def validate_sections(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
         invalid = [s for s in value if s not in ALLOWED_SECTIONS]
@@ -57,7 +57,7 @@ class TelegramExportIn(BaseModel):
     messages: list[dict]
 
 
-class ResumeOut(ResumeIn):
+class ResumeOut(ResumeBase):
     """Shape returned by GET endpoints — adds DB-generated fields."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -180,7 +180,7 @@ class ReviewResponse(BaseModel):
 
 
 class ReviewFeedbackIn(BaseModel):
-    rating: str = Field(min_length=1, max_length=32)
+    rating: Literal["agree", "partially_agree", "disagree"]
     comment: str | None = None
 
 

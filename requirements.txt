@@ -46,6 +46,7 @@ packaging==26.2
 portalocker==3.2.0
 protobuf==7.35.1
 pydantic==2.13.4
+pydantic-settings==2.16.1
 pydantic_core==2.46.4
 Pygments==2.20.0
 PyMuPDF==1.27.2.3

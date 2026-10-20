@@ -226,3 +226,4 @@ extract/__pycache__/
 models/
 *.pdf
 resumes*
+.env_keys

@@ -25,6 +25,12 @@
     <link href="/static/css/pages.css" rel="stylesheet" />
     <link href="/static/css/utilities.css" rel="stylesheet" />
     {% block extra_css %}{% endblock %}
+
+    <script>
+      // Bearer token injected by the server for same-origin API calls.
+      window.API_TOKEN = {{ api_token | tojson }};
+    </script>
+    <script src="/static/js/auth.js"></script>
   </head>
   <body>
     <header class="app-header py-3 mb-4">

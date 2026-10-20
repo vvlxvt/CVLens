@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import certifi
@@ -17,7 +16,9 @@ from qdrant_client.models import (
 )
 from sentence_transformers import SentenceTransformer
 
+from core.config import settings
 from db import resumes_repo
+from db.connection import get_session
 from extract.parser import parse_cv_sections
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -34,9 +35,9 @@ FIELD_WEIGHTS = {
     "experience": 1.0,
 }
 
-qdrant_api_key = os.getenv("QDRANT_API_KEY")
-qdrant_url = os.getenv("QDRANT_URL")
-qdrant_verify_ssl = os.getenv("QDRANT_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
+qdrant_api_key = settings.qdrant_api_key
+qdrant_url = settings.qdrant_url
+qdrant_verify_ssl = settings.qdrant_verify_ssl
 
 client = QdrantClient(
     url=qdrant_url,
@@ -152,8 +153,11 @@ def reindex_all() -> int:
     model = get_embedding_model()
     ensure_collection(embedding_dimension(model), force_recreate=True)
 
+    with get_session() as session:
+        resumes = resumes_repo.list_all(session)
+
     points = []
-    for resume in resumes_repo.list_all():
+    for resume in resumes:
         case = resume_to_case_dict(resume)
         text = build_resume_text(case)
         if len(text.strip()) < 100:

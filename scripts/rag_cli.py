@@ -1,25 +1,24 @@
+import os
 from pathlib import Path
 from uuid import uuid4
 
+import certifi
+from dotenv import load_dotenv
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from ollama import chat
+from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
-    VectorParams,
-    PointStruct,
-    Filter,
     FieldCondition,
-    MatchValue,
+    Filter,
     FilterSelector,
+    MatchValue,
     PayloadSchemaType,
+    PointStruct,
+    VectorParams,
 )
 from sentence_transformers import SentenceTransformer
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-import os
-import certifi
-from dotenv import load_dotenv
-
-from openai import OpenAI
 
 # Загружает переменные из файла .env в окружение
 load_dotenv()

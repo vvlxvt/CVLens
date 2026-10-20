@@ -79,6 +79,16 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 
 ```env
+# API security — Bearer token required on data routes (empty = auth off);
+# CORS_ORIGINS — comma-separated browser origins (empty = same-origin only)
+API_TOKEN=change-me
+CORS_ORIGINS=
+
+# Upload limits (bytes / counts)
+MAX_RESULT_JSON_BYTES=52428800
+MAX_PDF_BYTES=20971520
+MAX_PDF_FILES_PER_UPLOAD=200
+
 # Qdrant
 QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-api-key

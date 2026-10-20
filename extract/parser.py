@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import time
 import unicodedata
@@ -8,7 +7,9 @@ from pathlib import Path
 
 import requests
 
+from core.config import settings
 from db import prompts_repo, resumes_repo
+from db.connection import get_session
 from response import (
     LLM_PROVIDER,
     MODEL,
@@ -23,11 +24,10 @@ try:
 except ImportError as exc:
     raise RuntimeError("PyMuPDF is required. Install: pip install PyMuPDF") from exc
 
-
 DATA_DIR = Path(__file__).resolve().parent / "data"
 INPUT_PATH = DATA_DIR / "result.json"
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+API_BASE_URL = settings.api_base_url
 
 # What SHOULD be used if the configured provider is healthy — used only to
 # detect staleness (see _is_up_to_date). The model actually recorded on
@@ -450,7 +450,8 @@ def _is_up_to_date(resume_id: str, feedback_raw: str, about_prompt_id: int, feed
     version and the same feedback text — safe to skip reprocessing. A row
     saved via an Ollama fallback will NOT count as up to date once the
     preferred provider is healthy again, so it gets reprocessed/upgraded."""
-    existing = resumes_repo.get_by_resume_id(resume_id)
+    with get_session() as session:
+        existing = resumes_repo.get_by_resume_id(session, resume_id)
     if existing is None:
         return False
     return (
@@ -533,8 +534,9 @@ def build_cases(
     # print("BUILD DATA_DIR:", data_dir.resolve())
     grouped = _group_messages_by_cv(messages)
 
-    about_prompt = prompts_repo.get_latest("intro_extraction")
-    feedback_prompt = prompts_repo.get_latest("feedback_extraction")
+    with get_session() as session:
+        about_prompt = prompts_repo.get_latest(session, "intro_extraction")
+        feedback_prompt = prompts_repo.get_latest(session, "feedback_extraction")
     if about_prompt is None or feedback_prompt is None:
         raise RuntimeError(
             "No prompts found in the DB. Run `python -m db.seed_prompts` once to seed "
@@ -609,7 +611,8 @@ def _save_one_case(case: dict) -> bool:
     if case.get("feedback_sections") is None:
         print(f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)")
         return False
-    resumes_repo.upsert(case)
+    with get_session() as session:
+        resumes_repo.upsert(session, case)
     return True
 
 
@@ -638,11 +641,15 @@ def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BA
     filesystem (extract/data/) — same assumption as running parser.py
     directly. Returns the API's UploadResult as a dict.
     """
+    headers = (
+        {"Authorization": f"Bearer {settings.api_token}"} if settings.api_token else {}
+    )
     with open(json_path, "rb") as f:
         try:
             response = requests.post(
                 f"{api_base_url}/resumes/upload",
                 files={"file": (json_path.name, f, "application/json")},
+                headers=headers,
                 timeout=600,  # the API runs the full LLM pipeline synchronously — can take a while
             )
         except requests.exceptions.ConnectionError as e:

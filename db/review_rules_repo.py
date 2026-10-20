@@ -1,6 +1,8 @@
 from typing import Any
 
-from db.connection import get_session
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from db.models import CVReviewRuleDiff, CVReviewRuleSet
 
 
@@ -19,54 +21,42 @@ def _next_version(existing_versions: list[str]) -> str:
     return f"v{max(numbers) + 1}" if numbers else "v1"
 
 
-def get_latest_active() -> CVReviewRuleSet | None:
-    with get_session() as session:
-        row = (
-            session.query(CVReviewRuleSet)
-            .filter(CVReviewRuleSet.status == "active")
-            .order_by(CVReviewRuleSet.id.desc())
-            .first()
-        )
-        if row:
-            session.expunge(row)
-        return row
+def get_latest_active(session: Session) -> CVReviewRuleSet | None:
+    row = session.scalars(
+        select(CVReviewRuleSet)
+        .where(CVReviewRuleSet.status == "active")
+        .order_by(CVReviewRuleSet.id.desc())
+    ).first()
+    if row:
+        session.expunge(row)
+    return row
 
 
-def list_rule_sets(limit: int = 20) -> list[CVReviewRuleSet]:
-    with get_session() as session:
-        rows = (
-            session.query(CVReviewRuleSet)
-            .order_by(CVReviewRuleSet.id.desc())
-            .limit(limit)
-            .all()
-        )
-        session.expunge_all()
-        return rows
+def list_rule_sets(session: Session, limit: int = 20) -> list[CVReviewRuleSet]:
+    rows = session.scalars(
+        select(CVReviewRuleSet).order_by(CVReviewRuleSet.id.desc()).limit(limit)
+    ).all()
+    session.expunge_all()
+    return list(rows)
 
 
-def list_diffs(limit: int = 20) -> list[CVReviewRuleDiff]:
-    with get_session() as session:
-        _ensure_initial_diff(session)
-        rows = (
-            session.query(CVReviewRuleDiff)
-            .order_by(CVReviewRuleDiff.id.desc())
-            .limit(limit)
-            .all()
-        )
-        session.expunge_all()
-        return rows
+def list_diffs(session: Session, limit: int = 20) -> list[CVReviewRuleDiff]:
+    _ensure_initial_diff(session)
+    rows = session.scalars(
+        select(CVReviewRuleDiff).order_by(CVReviewRuleDiff.id.desc()).limit(limit)
+    ).all()
+    session.expunge_all()
+    return list(rows)
 
 
-def _ensure_initial_diff(session) -> None:
-    has_diff = session.query(CVReviewRuleDiff.id).first()
+def _ensure_initial_diff(session: Session) -> None:
+    has_diff = session.scalar(select(CVReviewRuleDiff.id).limit(1))
     if has_diff:
         return
 
-    first_rule_set = (
-        session.query(CVReviewRuleSet)
-        .order_by(CVReviewRuleSet.id.asc())
-        .first()
-    )
+    first_rule_set = session.scalars(
+        select(CVReviewRuleSet).order_by(CVReviewRuleSet.id.asc())
+    ).first()
     if first_rule_set is None:
         return
 
@@ -84,6 +74,7 @@ def _ensure_initial_diff(session) -> None:
 
 
 def create_next_rule_set(
+    session: Session,
     *,
     rules: list[dict[str, Any]],
     source_review_ids: list[int],
@@ -93,35 +84,35 @@ def create_next_rule_set(
     summary: str | None = None,
     diff_summary: str | None = None,
 ) -> CVReviewRuleSet:
-    with get_session() as session:
-        existing_versions = [row.version for row in session.query(CVReviewRuleSet).all()]
-        previous = (
-            session.query(CVReviewRuleSet)
-            .filter(CVReviewRuleSet.status == "active")
-            .order_by(CVReviewRuleSet.id.desc())
-            .first()
-        )
+    existing_versions = list(
+        session.scalars(select(CVReviewRuleSet.version)).all()
+    )
+    previous = session.scalars(
+        select(CVReviewRuleSet)
+        .where(CVReviewRuleSet.status == "active")
+        .order_by(CVReviewRuleSet.id.desc())
+    ).first()
 
-        row = CVReviewRuleSet(
-            version=_next_version(existing_versions),
-            rules=rules,
-            source_review_ids=source_review_ids,
-            summary=summary,
-            status="active",
-        )
-        session.add(row)
-        session.flush()
+    row = CVReviewRuleSet(
+        version=_next_version(existing_versions),
+        rules=rules,
+        source_review_ids=source_review_ids,
+        summary=summary,
+        status="active",
+    )
+    session.add(row)
+    session.flush()
 
-        diff = CVReviewRuleDiff(
-            from_rule_set_id=previous.id if previous else None,
-            to_rule_set_id=row.id,
-            added_rules=added_rules or [],
-            changed_rules=changed_rules or [],
-            removed_rules=removed_rules or [],
-            summary=diff_summary,
-        )
-        session.add(diff)
-        session.flush()
-        session.refresh(row)
-        session.expunge(row)
-        return row
+    diff = CVReviewRuleDiff(
+        from_rule_set_id=previous.id if previous else None,
+        to_rule_set_id=row.id,
+        added_rules=added_rules or [],
+        changed_rules=changed_rules or [],
+        removed_rules=removed_rules or [],
+        summary=diff_summary,
+    )
+    session.add(diff)
+    session.flush()
+    session.refresh(row)
+    session.expunge(row)
+    return row

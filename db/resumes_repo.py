@@ -1,29 +1,30 @@
-from db.connection import get_session
-from db.models import Resume
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
 
-ALLOWED_SECTIONS = ("role_position", "skills", "about_me_summary", "experience", "formatting")
+from db.models import ALLOWED_SECTIONS, Resume
+
+__all__ = ["ALLOWED_SECTIONS"]
 
 
-def _clean_sections(sections: list | None) -> list | None:
+def _clean_sections(sections: list[str] | None) -> list[str] | None:
     if not sections:
         return None
     filtered = [s for s in sections if s in ALLOWED_SECTIONS]
     return filtered or None
 
 
-def create(data: dict) -> int:
+def create(session: Session, data: dict) -> int:
     """Insert a new resume row. Returns the new row's id."""
     data = dict(data)
     data["feedback_sections"] = _clean_sections(data.get("feedback_sections"))
 
-    with get_session() as session:
-        resume = Resume(**data)
-        session.add(resume)
-        session.flush()  # populates resume.id before commit
-        return resume.id
+    resume = Resume(**data)
+    session.add(resume)
+    session.flush()  # populates resume.id before commit
+    return resume.id
 
 
-def upsert(data: dict) -> int:
+def upsert(session: Session, data: dict) -> int:
     """
     Insert a new resume row, or update an existing one (matched by resume_id)
     with whatever fields are provided. Use this instead of create() when the
@@ -33,52 +34,53 @@ def upsert(data: dict) -> int:
     if "feedback_sections" in data:
         data["feedback_sections"] = _clean_sections(data.get("feedback_sections"))
 
-    with get_session() as session:
-        resume = (
-            session.query(Resume)
-            .filter(Resume.resume_id == data["resume_id"])
-            .first()
-        )
-        if resume:
-            for key, value in data.items():
-                setattr(resume, key, value)
-            session.flush()
-            return resume.id
-
-        resume = Resume(**data)
-        session.add(resume)
+    resume = session.scalars(
+        select(Resume).where(Resume.resume_id == data["resume_id"])
+    ).first()
+    if resume:
+        for key, value in data.items():
+            setattr(resume, key, value)
         session.flush()
         return resume.id
 
+    resume = Resume(**data)
+    session.add(resume)
+    session.flush()
+    return resume.id
 
-def get_by_resume_id(resume_id: str) -> Resume | None:
-    with get_session() as session:
-        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
-        if resume:
-            session.expunge(resume)  # detach so it's usable after session closes
-        return resume
+
+def get_by_resume_id(session: Session, resume_id: str) -> Resume | None:
+    resume = session.scalars(
+        select(Resume).where(Resume.resume_id == resume_id)
+    ).first()
+    if resume:
+        session.expunge(resume)  # detach so it's usable after session closes
+    return resume
 
 
 def update_feedback(
+    session: Session,
     resume_id: str,
     feedback_summary: str | None,
-    feedback_sections: list | None,
+    feedback_sections: list[str] | None,
     llm: str,
     prompt_id: int,
 ) -> bool:
     """Returns True if a row was updated, False if resume_id not found."""
-    with get_session() as session:
-        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
-        if not resume:
-            return False
-        resume.feedback_summary = feedback_summary
-        resume.feedback_sections = _clean_sections(feedback_sections)
-        resume.feedback_llm = llm
-        resume.feedback_prompt_id = prompt_id
-        return True
+    resume = session.scalars(
+        select(Resume).where(Resume.resume_id == resume_id)
+    ).first()
+    if not resume:
+        return False
+    resume.feedback_summary = feedback_summary
+    resume.feedback_sections = _clean_sections(feedback_sections)
+    resume.feedback_llm = llm
+    resume.feedback_prompt_id = prompt_id
+    return True
 
 
 def update_about(
+    session: Session,
     resume_id: str,
     full_name: str | None,
     role_position: str | None,
@@ -86,81 +88,83 @@ def update_about(
     llm: str,
     prompt_id: int,
 ) -> bool:
-    with get_session() as session:
-        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
-        if not resume:
-            return False
-        resume.full_name = full_name
-        resume.role_position = role_position
-        resume.about_summary = about_summary
-        resume.about_llm = llm
-        resume.about_prompt_id = prompt_id
-        return True
+    resume = session.scalars(
+        select(Resume).where(Resume.resume_id == resume_id)
+    ).first()
+    if not resume:
+        return False
+    resume.full_name = full_name
+    resume.role_position = role_position
+    resume.about_summary = about_summary
+    resume.about_llm = llm
+    resume.about_prompt_id = prompt_id
+    return True
 
 
-def get_stale_feedback(current_llm: str, current_prompt_id: int) -> list[Resume]:
-    """Resumes whose feedback extraction used a different model or prompt version."""
-    with get_session() as session:
-        rows = (
-            session.query(Resume)
-            .filter(
-                (Resume.feedback_llm != current_llm)
-                | (Resume.feedback_prompt_id != current_prompt_id)
+def get_stale_feedback(
+    session: Session, current_llm: str, current_prompt_id: int
+) -> list[Resume]:
+    """Resumes whose feedback extraction used a different model or prompt
+    version — or never ran at all (NULL columns count as stale too)."""
+    rows = session.scalars(
+        select(Resume).where(
+            or_(
+                Resume.feedback_llm.is_(None),
+                Resume.feedback_llm != current_llm,
+                Resume.feedback_prompt_id.is_(None),
+                Resume.feedback_prompt_id != current_prompt_id,
             )
-            .all()
         )
-        session.expunge_all()
-        return rows
+    ).all()
+    session.expunge_all()
+    return list(rows)
 
 
-def get_stale_about(current_llm: str, current_prompt_id: int) -> list[Resume]:
-    """Resumes whose intro/about extraction used a different model or prompt version."""
-    with get_session() as session:
-        rows = (
-            session.query(Resume)
-            .filter(
-                (Resume.about_llm != current_llm)
-                | (Resume.about_prompt_id != current_prompt_id)
+def get_stale_about(
+    session: Session, current_llm: str, current_prompt_id: int
+) -> list[Resume]:
+    """Resumes whose intro/about extraction used a different model or prompt
+    version — or never ran at all (NULL columns count as stale too)."""
+    rows = session.scalars(
+        select(Resume).where(
+            or_(
+                Resume.about_llm.is_(None),
+                Resume.about_llm != current_llm,
+                Resume.about_prompt_id.is_(None),
+                Resume.about_prompt_id != current_prompt_id,
             )
-            .all()
         )
-        session.expunge_all()
-        return rows
+    ).all()
+    session.expunge_all()
+    return list(rows)
 
 
-def list_by_feedback_section(section: str) -> list[Resume]:
+def list_by_feedback_section(session: Session, section: str) -> list[Resume]:
     """Resumes where feedback_sections (JSON array) contains the given section."""
-    with get_session() as session:
-        # SQLite JSON column comes back as a Python list, so filter in Python
-        # after a coarse SQL LIKE prefilter (avoids loading rows with no JSON at all).
-        rows = (
-            session.query(Resume)
-            .filter(Resume.feedback_sections.isnot(None))
-            .all()
-        )
-        session.expunge_all()
-        return [r for r in rows if r.feedback_sections and section in r.feedback_sections]
+    # SQLite JSON column comes back as a Python list, so filter in Python
+    # after loading only rows that have JSON at all.
+    rows = session.scalars(
+        select(Resume).where(Resume.feedback_sections.isnot(None))
+    ).all()
+    session.expunge_all()
+    return [r for r in rows if r.feedback_sections and section in r.feedback_sections]
 
 
-def list_all() -> list[Resume]:
+def list_all(session: Session) -> list[Resume]:
     """All resumes in the DB. Used by the Qdrant (re)indexing pipeline."""
-    with get_session() as session:
-        rows = session.query(Resume).all()
-        session.expunge_all()
-        return rows
+    rows = session.scalars(select(Resume)).all()
+    session.expunge_all()
+    return list(rows)
 
 
-def list_feedback_llms() -> list[str]:
+def list_feedback_llms(session: Session) -> list[str]:
     """Distinct LLM names used by feedback parsing."""
-    with get_session() as session:
-        return sorted(
-            value
-            for (value,) in session.query(Resume.feedback_llm).distinct()
-            if value
-        )
+    values = session.scalars(select(Resume.feedback_llm).distinct()).all()
+    return sorted(value for value in values if value)
 
 
 def list_paginated(
+    session: Session,
     skip: int = 0,
     limit: int = 50,
     llm: str | None = None,
@@ -176,34 +180,34 @@ def list_paginated(
     revisit (e.g. a join table) if this table grows into the hundreds of
     thousands of rows.
     """
-    with get_session() as session:
-        query = session.query(Resume)
-        if llm:
-            query = query.filter(Resume.feedback_llm == llm)
-        if has_feedback is True:
-            query = query.filter(Resume.feedback_sections.isnot(None))
-        elif has_feedback is False:
-            query = query.filter(Resume.feedback_sections.is_(None))
+    stmt = select(Resume)
+    if llm:
+        stmt = stmt.where(Resume.feedback_llm == llm)
+    if has_feedback is True:
+        stmt = stmt.where(Resume.feedback_sections.isnot(None))
+    elif has_feedback is False:
+        stmt = stmt.where(Resume.feedback_sections.is_(None))
 
-        if section:
-            rows = query.order_by(Resume.id).all()
-            session.expunge_all()
-            matching = [
-                r for r in rows if r.feedback_sections and section in r.feedback_sections
-            ]
-            total = len(matching)
-            return matching[skip : skip + limit], total
-
-        total = query.count()
-        rows = query.order_by(Resume.id).offset(skip).limit(limit).all()
+    if section:
+        rows = session.scalars(stmt.order_by(Resume.id)).all()
         session.expunge_all()
-        return rows, total
+        matching = [
+            r for r in rows if r.feedback_sections and section in r.feedback_sections
+        ]
+        total = len(matching)
+        return matching[skip : skip + limit], total
+
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = session.scalars(stmt.order_by(Resume.id).offset(skip).limit(limit)).all()
+    session.expunge_all()
+    return list(rows), total
 
 
-def delete(resume_id: str) -> bool:
-    with get_session() as session:
-        resume = session.query(Resume).filter(Resume.resume_id == resume_id).first()
-        if not resume:
-            return False
-        session.delete(resume)
-        return True
+def delete(session: Session, resume_id: str) -> bool:
+    resume = session.scalars(
+        select(Resume).where(Resume.resume_id == resume_id)
+    ).first()
+    if not resume:
+        return False
+    session.delete(resume)
+    return True

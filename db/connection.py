@@ -1,13 +1,15 @@
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import QueuePool
 
-# from db.models import Base
+from core.config import settings
 
-DB_PATH = "resumes.db"
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+# Absolute path from settings: the DB must not depend on the working
+# directory of whatever process happens to launch the server.
+DATABASE_URL = f"sqlite:///{settings.db_path}"
 
 # check_same_thread=False + a real connection pool: needed so multiple
 # worker threads (e.g. parser.py's parallel CV processing) can each get
@@ -15,7 +17,6 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    future=True,
     connect_args={"check_same_thread": False},
     poolclass=QueuePool,
     pool_size=10,
@@ -24,7 +25,7 @@ engine = create_engine(
 
 
 # Enable SQLite foreign key enforcement (off by default) and WAL mode
-# (better concurrent read/write behavior once a web backend is added).
+# (better concurrent read/write behavior with a web backend).
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
@@ -33,17 +34,16 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.close()
 
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-
-
-# def init_db():
-#     """Create all tables if they don't exist. For schema changes later, use Alembic instead."""
-#     Base.metadata.create_all(bind=engine)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 @contextmanager
-def get_session():
+def get_session() -> Iterator[Session]:
     """
+    Context-manager session for CLI / background code paths (parser,
+    vector_search, LLM helpers) where there is no HTTP request to hang
+    a FastAPI dependency off. FastAPI endpoints use api.deps.get_db instead.
+
     Usage:
         with get_session() as session:
             session.add(obj)

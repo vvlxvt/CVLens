@@ -1,20 +1,18 @@
 import json
-import os
 import re
-import requests
 from ast import literal_eval
 
 import openai
-from dotenv import load_dotenv
+import requests
 from ollama import chat
 from openai import OpenAI
 
+from core.config import settings
 from db import prompts_repo
+from db.connection import get_session
 
-load_dotenv(override=True)
-
-groq_api_key = os.getenv("GROQ_API_KEY")
-openrouter_api_key = os.getenv("OPEN_ROUTER_KEY")
+groq_api_key = settings.groq_api_key
+openrouter_api_key = settings.open_router_key
 
 groq_client = (
     OpenAI(
@@ -35,8 +33,8 @@ openrouter_client = (
     else None
 )
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
-ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "0"))
+LLM_PROVIDER = settings.llm_provider
+ollama_num_gpu = settings.ollama_num_gpu
 
 DECOMMISSIONED_MODEL_REPLACEMENTS = {
     "llama-3.3-70b-versatile": "qwen/qwen3.8-27b",
@@ -47,12 +45,12 @@ def _replace_decommissioned_model(model: str) -> str:
     return DECOMMISSIONED_MODEL_REPLACEMENTS.get(model, model)
 
 
-MODEL = _replace_decommissioned_model(os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"))
+MODEL = _replace_decommissioned_model(settings.groq_model)
 # Актуальная бесплатная модель по умолчанию
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+OPENROUTER_MODEL = settings.openrouter_model
 OPENAI_MODEL = OPENROUTER_MODEL
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_NAME", "llama3.2:3b")
+OLLAMA_MODEL = settings.ollama_model_name
 
 _force_ollama = False
 
@@ -494,7 +492,8 @@ def generate_response(
 
 
 def _load_prompt(name: str):
-    prompt = prompts_repo.get_latest(name)
+    with get_session() as session:
+        prompt = prompts_repo.get_latest(session, name)
     if prompt is None:
         raise RuntimeError(
             f"No prompt found in the DB for {name!r}. "
@@ -527,7 +526,8 @@ def extract_intro_data(
 
 
 def build_feedback_prompt(feedback_text: str) -> tuple[str, str, int]:
-    prompt = prompts_repo.get_latest("feedback_extraction")
+    with get_session() as session:
+        prompt = prompts_repo.get_latest(session, "feedback_extraction")
     if prompt is None:
         raise RuntimeError(
             "No prompt found in the DB for 'feedback_extraction'. "
