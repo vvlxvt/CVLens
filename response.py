@@ -425,7 +425,11 @@ def generate_response(
     if model:
         model = _replace_decommissioned_model(model)
         if model == OLLAMA_MODEL or ":" in model and not model.endswith(":free"):
-            if not allow_ollama:
+            # allow_ollama=False blocks Ollama as a *fallback* for cloud-targeted
+            # calls — but when Ollama is the configured primary provider
+            # (LLM_PROVIDER=ollama), this is the requested model itself, not a
+            # fallback, so it must run.
+            if not allow_ollama and LLM_PROVIDER != "ollama":
                 raise ValueError("Ollama model is disabled for this operation")
             result = _call_ollama(prompt, json_mode, system, model=model)
             return result, model
@@ -484,7 +488,10 @@ def generate_response(
             )
             _force_ollama = True
 
-    if not allow_ollama:
+    # No cloud branch matched: this call falls through to Ollama. As above,
+    # Ollama only counts as a "disabled fallback" when it isn't the
+    # configured primary provider.
+    if not allow_ollama and LLM_PROVIDER != "ollama":
         raise ValueError("No cloud LLM provider was available and Ollama fallback is disabled")
 
     result = _call_ollama(prompt, json_mode, system)
