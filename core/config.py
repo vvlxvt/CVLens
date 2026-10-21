@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     open_router_key: str | None = None
     openrouter_model: str = "openrouter/auto"
 
+    # --- LLM for CV parsing (about / feedback extraction) -------------------
+    # Defaults to free OpenRouter models first; Ollama stays as fallback.
+    # Set to "ollama" to keep previous behaviour (everything local).
+    parsing_provider: str = "openrouter"
+    parsing_model: str = "openrouter/auto"
+
     # --- Parser ---------------------------------------------------------------
     # Base URL used by extract/parser.py when calling the API.
     api_base_url: str = "http://127.0.0.1:8000"

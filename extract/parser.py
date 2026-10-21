@@ -33,12 +33,19 @@ API_BASE_URL = settings.api_base_url
 # detect staleness (see _is_up_to_date). The model actually recorded on
 # each DB row (about_llm/feedback_llm) always reflects what really ran for
 # that call, which can differ if generate_response() falls back.
+#
+# Parsing (about + feedback extraction) has its own provider/model settings
+# so it can prefer free OpenRouter models while the rest of the app keeps
+# using LLM_PROVIDER (e.g. local Ollama).
 PREFERRED_MODEL = {
     "openrouter": OPENROUTER_MODEL,
     "openai": MODEL,
 }.get(LLM_PROVIDER, OLLAMA_MODEL)
-PREFERRED_ABOUT_MODEL = PREFERRED_MODEL
-PREFERRED_FEEDBACK_MODEL = PREFERRED_MODEL
+PREFERRED_ABOUT_MODEL = {
+    "openrouter": settings.parsing_model,
+    "openai": MODEL,
+}.get(settings.parsing_provider, OLLAMA_MODEL)
+PREFERRED_FEEDBACK_MODEL = PREFERRED_ABOUT_MODEL
 
 ADMINS = {
     "Aleksandr Valuev",
@@ -477,7 +484,10 @@ def _process_one_cv(pid: int, file_url: str, feedback_raw: str, data_dir: Path) 
 
         t1 = time.perf_counter()
         if feedback_raw:
-            fb_fields, feedback_model, feedback_prompt_id = extract_feedback_data(feedback_raw)
+            fb_fields, feedback_model, feedback_prompt_id = extract_feedback_data(
+                feedback_raw,
+                model=PREFERRED_FEEDBACK_MODEL,
+            )
             feedback_summary = fb_fields.get("feedback_summary")
             feedback_sections = fb_fields.get("feedback_sections")
         else:
