@@ -419,16 +419,20 @@ def generate_response(
     system: str | None = None,
     model: str | None = None,
     allow_ollama: bool = True,
-):
-    global _force_ollama
+) -> tuple[str, str]:
+    """
+    Unified LLM interface.
 
+    When `model` is given, that exact model is used (subject to the
+    `allow_ollama` guard).
+
+    When `model` is None — the default for CV review — providers are tried
+    in order: Groq → OpenRouter → local Ollama.
+    """
     if model:
         model = _replace_decommissioned_model(model)
-        if model == OLLAMA_MODEL or ":" in model and not model.endswith(":free"):
-            # allow_ollama=False blocks Ollama as a *fallback* for cloud-targeted
-            # calls — but when Ollama is the configured primary provider
-            # (LLM_PROVIDER=ollama), this is the requested model itself, not a
-            # fallback, so it must run.
+        if model == OLLAMA_MODEL or (":" in model and not model.endswith(":free")):
+            # Explicit Ollama model requested.
             if not allow_ollama and LLM_PROVIDER != "ollama":
                 raise ValueError("Ollama model is disabled for this operation")
             result = _call_ollama(prompt, json_mode, system, model=model)
@@ -439,60 +443,40 @@ def generate_response(
                 return result, used_model
             except (openai.OpenAIError, ValueError) as e:
                 return _fallback_to_groq_then_ollama(
-                    prompt,
-                    json_mode,
-                    system,
-                    "OpenRouter",
-                    e,
-                    allow_ollama=allow_ollama,
+                    prompt, json_mode, system, "OpenRouter", e, allow_ollama=allow_ollama,
                 )
         try:
             result = _call_groq_with_json_retry(prompt, json_mode, system, model=model)
             return result, model
         except (openai.OpenAIError, ValueError) as e:
             return _fallback_to_ollama(
-                prompt,
-                json_mode,
-                system,
-                "Groq",
-                e,
-                allow_ollama=allow_ollama,
+                prompt, json_mode, system, "Groq", e, allow_ollama=allow_ollama,
             )
 
-    if LLM_PROVIDER in ("openrouter", "official_openai"):
-        try:
-            result, used_model = _call_openrouter(prompt, json_mode, system)
-            return result, used_model
-        except (openai.OpenAIError, ValueError) as e:
-            return _fallback_to_groq_then_ollama(
-                prompt,
-                json_mode,
-                system,
-                "OpenRouter",
-                e,
-                allow_ollama=allow_ollama,
-            )
-
-    if LLM_PROVIDER == "openai" and (not _force_ollama or not allow_ollama):
+    # No explicit model: Groq → OpenRouter → Ollama (review default).
+    if groq_client:
         try:
             result = _call_groq_with_json_retry(prompt, json_mode, system)
             return result, MODEL
         except (openai.OpenAIError, ValueError) as e:
-            if not allow_ollama:
-                raise ValueError(
-                    "Groq/OpenAI call failed and Ollama fallback is disabled"
-                ) from e
             print(
-                f"[response] Groq/OpenAI call failed ({type(e).__name__}: {e}); "
-                f"falling back to Ollama ({OLLAMA_MODEL}) for the rest of this run."
+                f"[response] Groq failed ({type(e).__name__}: {e}); trying OpenRouter..."
             )
-            _force_ollama = True
 
-    # No cloud branch matched: this call falls through to Ollama. As above,
-    # Ollama only counts as a "disabled fallback" when it isn't the
-    # configured primary provider.
-    if not allow_ollama and LLM_PROVIDER != "ollama":
-        raise ValueError("No cloud LLM provider was available and Ollama fallback is disabled")
+    if openrouter_client:
+        try:
+            result, used_model = _call_openrouter(prompt, json_mode, system)
+            return result, used_model
+        except (openai.OpenAIError, ValueError) as e:
+            print(
+                f"[response] OpenRouter failed ({type(e).__name__}: {e}); "
+                f"falling back to Ollama ({OLLAMA_MODEL})..."
+            )
+
+    if not allow_ollama:
+        raise ValueError(
+            "No cloud LLM provider was available and Ollama fallback is disabled"
+        )
 
     result = _call_ollama(prompt, json_mode, system)
     return result, OLLAMA_MODEL
