@@ -137,3 +137,79 @@ class TestListPaginated:
         rows, _ = resumes_repo.list_paginated(repo_session, skip=10, limit=10)
         assert len(rows) == 10
         assert rows[0].resume_id == "10"
+
+
+class TestListByFeedbackSection:
+    """Тесты для list_by_feedback_section — SQL JSON1 фильтрация."""
+
+    def test_returns_resumes_with_matching_section(self, repo_session):
+        """Возвращаются только резюме с указанной секцией в feedback_sections."""
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "1", "feedback_sections": ["skills", "experience"],
+        })
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "2", "feedback_sections": ["skills"],
+        })
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "3", "feedback_sections": ["experience"],
+        })
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "4", "feedback_sections": None,
+        })
+
+        result = resumes_repo.list_by_feedback_section(repo_session, "skills")
+        ids = sorted(r.resume_id for r in result)
+        assert ids == ["1", "2"]
+
+    def test_returns_empty_when_no_match(self, repo_session):
+        """Возвращается пустой список, если ни у кого нет такой секции."""
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "1", "feedback_sections": ["skills"],
+        })
+        result = resumes_repo.list_by_feedback_section(repo_session, "formatting")
+        assert result == []
+
+    def test_ignores_null_sections(self, repo_session):
+        """Резюме с NULL feedback_sections не попадают в результат."""
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "1", "feedback_sections": None,
+        })
+        resumes_repo.upsert(repo_session, {
+            "resume_id": "2", "feedback_sections": ["skills"],
+        })
+        result = resumes_repo.list_by_feedback_section(repo_session, "skills")
+        assert len(result) == 1
+        assert result[0].resume_id == "2"
+
+
+class TestListPaginatedWithSection:
+    """Тесты для list_paginated с фильтром section (SQL JSON1)."""
+
+    def test_paginated_section_filter(self, repo_session):
+        """Фильтрация по секции работает с пагинацией и корректным total."""
+        for i in range(15):
+            sections = ["skills"] if i % 2 == 0 else ["experience"]
+            resumes_repo.upsert(repo_session, {
+                "resume_id": str(i), "feedback_sections": sections,
+            })
+
+        rows, total = resumes_repo.list_paginated(
+            repo_session, skip=0, limit=5, section="skills"
+        )
+        assert total == 8  # even numbers 0,2,4,6,8,10,12,14
+        assert len(rows) == 5
+        assert all(r.feedback_sections and "skills" in r.feedback_sections for r in rows)
+
+    def test_paginated_section_second_page(self, repo_session):
+        """Вторая страницы с фильтром по секции."""
+        for i in range(15):
+            sections = ["skills"] if i % 2 == 0 else ["experience"]
+            resumes_repo.upsert(repo_session, {
+                "resume_id": str(i), "feedback_sections": sections,
+            })
+
+        rows, total = resumes_repo.list_paginated(
+            repo_session, skip=5, limit=5, section="skills"
+        )
+        assert total == 8
+        assert len(rows) == 3  # only 3 remaining after skip=5

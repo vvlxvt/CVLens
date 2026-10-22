@@ -1,4 +1,4 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, literal_column, or_, select
 from sqlalchemy.orm import Session
 
 from db.models import ALLOWED_SECTIONS, Resume
@@ -140,14 +140,21 @@ def get_stale_about(
 
 
 def list_by_feedback_section(session: Session, section: str) -> list[Resume]:
-    """Resumes where feedback_sections (JSON array) contains the given section."""
-    # SQLite JSON column comes back as a Python list, so filter in Python
-    # after loading only rows that have JSON at all.
+    """Resumes where feedback_sections (JSON array) contains the given section.
+
+    Uses SQLite JSON1 json_each() to filter at the database level instead of
+    loading all rows into Python. This scales to large tables.
+    """
+    je = func.json_each(Resume.feedback_sections).alias("je")
+    subq = exists(select(1).select_from(je).where(literal_column("value") == section))
     rows = session.scalars(
-        select(Resume).where(Resume.feedback_sections.isnot(None))
+        select(Resume).where(
+            Resume.feedback_sections.isnot(None),
+            subq,
+        )
     ).all()
     session.expunge_all()
-    return [r for r in rows if r.feedback_sections and section in r.feedback_sections]
+    return list(rows)
 
 
 def list_all(session: Session) -> list[Resume]:
@@ -174,11 +181,9 @@ def list_paginated(
     """
     Filtered/paginated listing for the API.
 
-    Note: when `section` is given, filtering happens in Python (SQLite has
-    no portable ORM-level "JSON array contains" query), so the whole
-    matching set is loaded before slicing. Fine for realistic CV volumes;
-    revisit (e.g. a join table) if this table grows into the hundreds of
-    thousands of rows.
+    When `section` is given, filtering uses SQLite JSON1 json_each() at the
+    database level, so pagination and count are efficient without loading
+    the whole table into Python.
     """
     stmt = select(Resume)
     if llm:
@@ -189,13 +194,12 @@ def list_paginated(
         stmt = stmt.where(Resume.feedback_sections.is_(None))
 
     if section:
-        rows = session.scalars(stmt.order_by(Resume.id)).all()
-        session.expunge_all()
-        matching = [
-            r for r in rows if r.feedback_sections and section in r.feedback_sections
-        ]
-        total = len(matching)
-        return matching[skip : skip + limit], total
+        je = func.json_each(Resume.feedback_sections).alias("je")
+        subq = exists(select(1).select_from(je).where(literal_column("value") == section))
+        stmt = stmt.where(
+            Resume.feedback_sections.isnot(None),
+            subq,
+        )
 
     total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = session.scalars(stmt.order_by(Resume.id).offset(skip).limit(limit)).all()
