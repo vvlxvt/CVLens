@@ -39,15 +39,38 @@ qdrant_api_key = settings.qdrant_api_key
 qdrant_url = settings.qdrant_url
 qdrant_verify_ssl = settings.qdrant_verify_ssl
 
-client = QdrantClient(
-    url=qdrant_url,
-    api_key=qdrant_api_key,
-    check_compatibility=False,
-    verify=certifi.where() if qdrant_verify_ssl else False,
-    timeout=30,
-)
-
+_qdrant_client: QdrantClient | None = None
 _embedding_model: SentenceTransformer | None = None
+
+
+def get_qdrant_client() -> QdrantClient:
+    """Ленивая инициализация QdrantClient — создаётся при первом использовании.
+
+    Это позволяет импортировать модуль без доступа к сети (например, в
+    юнит-тестах или при остановленном Qdrant) и гарантирует, что клиент
+    создаётся только тогда, когда он действительно нужен.
+    """
+    global _qdrant_client
+    if _qdrant_client is None:
+        _qdrant_client = QdrantClient(
+            url=qdrant_url,
+            api_key=qdrant_api_key,
+            check_compatibility=False,
+            verify=certifi.where() if qdrant_verify_ssl else False,
+            timeout=30,
+        )
+    return _qdrant_client
+
+
+def close_qdrant_client() -> None:
+    """Закрывает QdrantClient и сбрасываетSingleton (для graceful shutdown)."""
+    global _qdrant_client
+    if _qdrant_client is not None:
+        try:
+            _qdrant_client.close()
+        except Exception:
+            pass
+        _qdrant_client = None
 
 
 def embedding_dimension(model: SentenceTransformer) -> int:
@@ -55,6 +78,7 @@ def embedding_dimension(model: SentenceTransformer) -> int:
 
 
 def ensure_collection(vector_size: int, force_recreate: bool = False):
+    client = get_qdrant_client()
     exists = collection_exists()
 
     if exists and not force_recreate:
@@ -181,11 +205,13 @@ def reindex_all() -> int:
         points.append(PointStruct(id=point_id, vector=vector, payload=payload))
 
     if points:
+        client = get_qdrant_client()
         client.upsert(collection_name=COLLECTION_NAME, points=points)
     return len(points)
 
 
 def collection_exists() -> bool:
+    client = get_qdrant_client()
     return any(c.name == COLLECTION_NAME for c in client.get_collections().collections)
 
 
@@ -194,6 +220,7 @@ def indexed_resume_ids() -> set[str]:
     if not collection_exists():
         return set()
 
+    client = get_qdrant_client()
     indexed: set[str] = set()
     offset = None
     while True:
@@ -244,6 +271,7 @@ def parse_query_cv(pdf_path: Path, allow_ollama: bool = False) -> dict:
 def search_similar(query_case: dict, limit: int = 6, skills: list[str] | None = None):
     model = get_embedding_model()
     vector = encode_weighted_resume(query_case, model, prefix="query")
+    client = get_qdrant_client()
     return client.query_points(
         collection_name=COLLECTION_NAME,
         query=vector,

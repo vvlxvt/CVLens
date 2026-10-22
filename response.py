@@ -14,24 +14,31 @@ from db.connection import get_session
 groq_api_key = settings.groq_api_key
 openrouter_api_key = settings.open_router_key
 
-groq_client = (
-    OpenAI(
-        api_key=groq_api_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-    if groq_api_key
-    else None
-)
+_groq_client: OpenAI | None = None
+_openrouter_client: OpenAI | None = None
 
-# Клиент OpenRouter через стандартный SDK OpenAI
-openrouter_client = (
-    OpenAI(
-        api_key=openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-    )
-    if openrouter_api_key
-    else None
-)
+
+def get_groq_client() -> OpenAI | None:
+    """Ленивая инициализация Groq-клиента — создаётся при первом использовании."""
+    global _groq_client
+    if _groq_client is None and groq_api_key:
+        _groq_client = OpenAI(
+            api_key=groq_api_key,
+            base_url="https://api.groq.com/openai/v1",
+        )
+    return _groq_client
+
+
+def get_openrouter_client() -> OpenAI | None:
+    """Ленивая инициализация OpenRouter-клиента — создаётся при первом использовании."""
+    global _openrouter_client
+    if _openrouter_client is None and openrouter_api_key:
+        _openrouter_client = OpenAI(
+            api_key=openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+    return _openrouter_client
+
 
 LLM_PROVIDER = settings.llm_provider
 ollama_num_gpu = settings.ollama_num_gpu
@@ -138,7 +145,8 @@ def _call_groq(
     if not groq_api_key:
         raise ValueError("GROQ_API_KEY is missing")
 
-    if groq_client is None:
+    client = get_groq_client()
+    if client is None:
         raise ValueError("Groq client is not configured")
 
     messages = []
@@ -167,7 +175,7 @@ def _call_groq(
             "type": "json_object"
         }
 
-    response = groq_client.chat.completions.create(**kwargs)
+    response = client.chat.completions.create(**kwargs)
 
     content = response.choices[0].message.content
 
@@ -258,7 +266,8 @@ def _call_openrouter(
 ):
     if not openrouter_api_key:
         raise ValueError("OPEN_ROUTER_KEY is missing")
-    if openrouter_client is None:
+    client = get_openrouter_client()
+    if client is None:
         raise ValueError("OpenRouter client is not configured")
 
     messages = []
@@ -294,7 +303,7 @@ def _call_openrouter(
     for current_model in candidate_models:
         try:
             kwargs["model"] = current_model
-            response = openrouter_client.chat.completions.create(**kwargs)
+            response = client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
 
             parsed = _parse_json_content(content) if json_mode else content
@@ -454,7 +463,7 @@ def generate_response(
             )
 
     # No explicit model: Groq → OpenRouter → Ollama (review default).
-    if groq_client:
+    if get_groq_client():
         try:
             result = _call_groq_with_json_retry(prompt, json_mode, system)
             return result, MODEL
@@ -463,7 +472,7 @@ def generate_response(
                 f"[response] Groq failed ({type(e).__name__}: {e}); trying OpenRouter..."
             )
 
-    if openrouter_client:
+    if get_openrouter_client():
         try:
             result, used_model = _call_openrouter(prompt, json_mode, system)
             return result, used_model

@@ -1,5 +1,6 @@
 """CVLens FastAPI application: web UI + REST API over the parsed-CV DB."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
@@ -9,11 +10,29 @@ from fastapi.staticfiles import StaticFiles
 from api.deps import require_token
 from api.routers import pages, prompts, resumes, review_rules, reviews
 from core.config import settings
+from db.connection import engine
+from vector_search import close_qdrant_client
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Управление жизненным циклом приложения.
+
+    При старте ничего не делаем (все внешние ресурсы — ленивые).
+    При остановке освобождаем пул соединений SQLAlchemy и закрываем
+    QdrantClient, чтобы избежать утечек и повреждений SQLite WAL.
+    """
+    yield
+    # Graceful shutdown
+    engine.dispose()
+    close_qdrant_client()
+
 
 app = FastAPI(
     title="CVLens API",
     version="0.1.0",
     description="CRUD access to the parsed-CV / recruiter-feedback DB, for the future web UI.",
+    lifespan=lifespan,
 )
 
 # Optional cross-origin access for a separately-hosted frontend; an empty
