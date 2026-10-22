@@ -94,17 +94,29 @@ QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-api-key
 QDRANT_VERIFY_SSL=false
 
-# LLM provider: ollama (default), openai (Groq-compatible), or official_openai
+# --- LLM provider: CV review / rules / search --------------------------------
+# LLM_PROVIDER selects the provider used by generate_response() when an explicit
+# model is NOT passed (i.e. CV review, review rules, search). The fallback chain
+# is Groq → OpenRouter → local Ollama.
+# ollama (default, local) | openai (Groq-compatible) | openrouter / official_openai
 LLM_PROVIDER=ollama
 OLLAMA_NUM_GPU=0
 
-# Groq (used by response.py when LLM_PROVIDER=openai)
+# Groq — first choice for CV review when no explicit model is passed
 GROQ_API_KEY=your-groq-key
 GROQ_MODEL=qwen/qwen3.6-27b
 
-# OpenAI official API (also appears in the selectable model list)
-OPENAI_API_KEY=your-openai-key
-OPENAI_MODEL=gpt-5.1
+# OpenRouter — second choice for CV review / parsing fallback
+OPEN_ROUTER_KEY=your-openrouter-api-key
+OPENROUTER_MODEL=openrouter/auto
+
+# --- CV parsing provider (about / feedback extraction) -----------------------
+# Separate from LLM_PROVIDER so parsing can prefer free cloud models while the
+# rest of the app stays local. Set to "ollama" to keep everything local.
+# openrouter (free models first, default) | ollama | openai (Groq)
+PARSING_PROVIDER=openrouter
+# Concrete free model for parsing; ignored when PARSING_PROVIDER=ollama
+PARSING_MODEL=openrouter/auto
 
 # Database (SQLite - default, no additional config needed)
 # Database file: resumes.db (created automatically)
