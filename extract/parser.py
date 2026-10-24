@@ -1,10 +1,12 @@
 import json
+import logging
 import re
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import fitz
 import requests
 
 from core.config import settings
@@ -18,6 +20,8 @@ from response import (
     extract_feedback_data,
     extract_intro_data,
 )
+
+logger = logging.getLogger(__name__)
 
 try:
     import fitz
@@ -510,9 +514,34 @@ def _process_one_cv(pid: int, file_url: str, feedback_raw: str, data_dir: Path) 
             "feedback_llm": feedback_model,
             "feedback_prompt_id": feedback_prompt_id,
         }
-    except Exception as e:  # noqa: BLE001
-        print(f"[error] resume_id={pid} failed and was skipped: {type(e).__name__}: {e}")
-        return None
+    except fitz.FileDataError as e:
+        logger.error("resume_id=%s corrupt PDF: %s", pid, e)
+        return {
+            "_error_type": "corrupt_pdf",
+            "_error_message": str(e),
+            "pid": pid,
+        }
+    except requests.RequestException as e:
+        logger.error("resume_id=%s network error during LLM call: %s", pid, e)
+        return {
+            "_error_type": "network_error",
+            "_error_message": str(e),
+            "pid": pid,
+        }
+    except ValueError as e:
+        logger.error("resume_id=%s LLM returned invalid data: %s", pid, e)
+        return {
+            "_error_type": "invalid_llm_response",
+            "_error_message": str(e),
+            "pid": pid,
+        }
+    except Exception as e:  # noqa: BLE001 — unexpected, log and skip
+        logger.exception("resume_id=%s unexpected error: %s", pid, e)
+        return {
+            "_error_type": "unexpected",
+            "_error_message": str(e),
+            "pid": pid,
+        }
 
 
 def build_cases(
@@ -570,6 +599,7 @@ def build_cases(
         return []
 
     cases = []
+    errors = 0
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
             pool.submit(_process_one_cv, pid, entry["file"], entry["feedback_raw"], data_dir): pid
@@ -579,23 +609,32 @@ def build_cases(
             pid = futures[future]
             try:
                 case = future.result()
-            except Exception as e:  # noqa: BLE001
-                # _process_one_cv already catches its own errors internally
-                # and returns None — this is a defensive fallback in case
-                # something outside that try/except still blows up.
-                print(f"[error] resume_id={pid} raised unexpectedly and was skipped: {e}")
+            except Exception as e:  # noqa: BLE001 — defensive fallback
+                logger.exception("resume_id=%r raised unexpectedly and was skipped", pid)
+                errors += 1
                 continue
 
             if case is None:
+                # Intentional skip (non-English CV or no feedback)
+                continue
+
+            if isinstance(case, dict) and "_error_type" in case:
+                # Structured error from _process_one_cv — logged there already
+                errors += 1
                 continue
 
             if on_case_processed is not None:
                 try:
                     on_case_processed(case)
                 except Exception as e:  # noqa: BLE001
-                    print(f"[error] resume_id={pid}: on_case_processed callback failed: {e}")
+                    logger.error("resume_id=%r: on_case_processed callback failed: %s", pid, e)
+                    errors += 1
+                    continue
 
             cases.append(case)
+
+    if errors:
+        logger.warning("build_cases: %d CV(s) failed with errors, %d saved", errors, len(cases))
 
     return cases
 
