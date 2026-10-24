@@ -149,6 +149,12 @@ def upload_resumes(
                     f"({settings.max_pdf_bytes} bytes)"
                 ),
             )
+        # Validate PDF magic bytes — reject files with .pdf extension that
+        # are not actually PDF documents (e.g. renamed executables, text
+        # files, or empty uploads).
+        if not content.startswith(b"%PDF-"):
+            skipped_pdf_names.append(pdf.filename or "")
+            continue
         if total_bytes > settings.max_upload_bytes:
             raise HTTPException(
                 status_code=413,
