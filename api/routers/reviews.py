@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from openai import OpenAIError
 
 import vector_search
@@ -15,6 +15,7 @@ from api.reviewing import (
     _match_from_point,
     _parse_uploaded_query_cv,
 )
+from core.rate_limit import llm_rate_limiter, read_rate_limiter
 from api.schemas import (
     ParsedCVOut,
     ReviewFeedbackIn,
@@ -27,7 +28,11 @@ from db import review_rules_repo, reviews_repo
 router = APIRouter(tags=["reviews"])
 
 
-@router.post("/resumes/review", response_model=ReviewResponse)
+@router.post(
+    "/resumes/review",
+    response_model=ReviewResponse,
+    dependencies=[Depends(llm_rate_limiter.check)],
+)
 def review_resume(
     session: DbSession,
     file: Annotated[
@@ -111,7 +116,11 @@ def review_resume(
     )
 
 
-@router.post("/reviews/{review_id}/feedback", response_model=ReviewFeedbackResult)
+@router.post(
+    "/reviews/{review_id}/feedback",
+    response_model=ReviewFeedbackResult,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def add_review_feedback(
     session: DbSession, review_id: int, body: ReviewFeedbackIn
 ):

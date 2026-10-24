@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from openai import OpenAIError
 
 from api.deps import DbSession
@@ -11,6 +11,7 @@ from api.reviewing import (
     _llm_provider_error_detail,
     _normalize_rule_payload,
 )
+from core.rate_limit import llm_rate_limiter, read_rate_limiter
 from api.schemas import (
     ReviewRuleDiffOut,
     ReviewRuleGeneration,
@@ -24,7 +25,11 @@ from response import generate_response
 router = APIRouter(tags=["review-rules"])
 
 
-@router.post("/review-rules/rebuild", response_model=ReviewRuleRebuildResult)
+@router.post(
+    "/review-rules/rebuild",
+    response_model=ReviewRuleRebuildResult,
+    dependencies=[Depends(llm_rate_limiter.check)],
+)
 def rebuild_review_rules(session: DbSession, body: ReviewRuleRebuildIn | None = None):
     options = body or ReviewRuleRebuildIn()
     reviewed_cases = reviews_repo.list_with_user_feedback(session, limit=options.limit)
@@ -81,12 +86,20 @@ def rebuild_review_rules(session: DbSession, body: ReviewRuleRebuildIn | None = 
     )
 
 
-@router.get("/review-rules/latest", response_model=ReviewRuleSetOut | None)
+@router.get(
+    "/review-rules/latest",
+    response_model=ReviewRuleSetOut | None,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def get_latest_review_rule_set(session: DbSession):
     return review_rules_repo.get_latest_active(session)
 
 
-@router.get("/review-rules", response_model=list[ReviewRuleSetOut])
+@router.get(
+    "/review-rules",
+    response_model=list[ReviewRuleSetOut],
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def list_review_rule_sets(
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -94,7 +107,11 @@ def list_review_rule_sets(
     return review_rules_repo.list_rule_sets(session, limit=limit)
 
 
-@router.get("/review-rules/diffs", response_model=list[ReviewRuleDiffOut])
+@router.get(
+    "/review-rules/diffs",
+    response_model=list[ReviewRuleDiffOut],
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def list_review_rule_diffs(
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,

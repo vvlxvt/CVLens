@@ -3,7 +3,7 @@
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from openai import OpenAIError
 from pydantic import ValidationError
 from qdrant_client.http.exceptions import (
@@ -34,6 +34,7 @@ from api.schemas import (
     UploadResult,
 )
 from core.config import settings
+from core.rate_limit import llm_rate_limiter, read_rate_limiter
 from db import resumes_repo
 from extract.parser import DATA_DIR, build_cases
 from response import (
@@ -49,7 +50,11 @@ from response import (
 router = APIRouter(tags=["resumes"])
 
 
-@router.post("/resumes/upload", response_model=UploadResult)
+@router.post(
+    "/resumes/upload",
+    response_model=UploadResult,
+    dependencies=[Depends(llm_rate_limiter.check)],
+)
 def upload_resumes(
     file: Annotated[
         UploadFile,
@@ -183,7 +188,11 @@ def upload_resumes(
     )
 
 
-@router.post("/resumes/search", response_model=SearchResponse)
+@router.post(
+    "/resumes/search",
+    response_model=SearchResponse,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def search_resumes(
     session: DbSession,
     file: Annotated[
@@ -227,7 +236,11 @@ def search_resumes(
     )
 
 
-@router.post("/resumes/reindex", response_model=ReindexResult)
+@router.post(
+    "/resumes/reindex",
+    response_model=ReindexResult,
+    dependencies=[Depends(llm_rate_limiter.check)],
+)
 def reindex_resumes():
     """
     Recreates the Qdrant collection from scratch using the current DB
@@ -238,7 +251,11 @@ def reindex_resumes():
     return ReindexResult(indexed=count)
 
 
-@router.get("/resumes", response_model=PaginatedResumeCards)
+@router.get(
+    "/resumes",
+    response_model=PaginatedResumeCards,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def list_resumes(
     session: DbSession,
     skip: Annotated[int, Query(ge=0)] = 0,
@@ -289,12 +306,20 @@ def list_resumes(
     return PaginatedResumeCards(total=total, skip=skip, limit=limit, items=items)
 
 
-@router.get("/resumes/llms", response_model=list[str])
+@router.get(
+    "/resumes/llms",
+    response_model=list[str],
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def list_resume_llms(session: DbSession):
     return resumes_repo.list_feedback_llms(session)
 
 
-@router.get("/resumes/llm-options", response_model=LlmOptions)
+@router.get(
+    "/resumes/llm-options",
+    response_model=LlmOptions,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def get_llm_options(session: DbSession):
     feedback_models = resumes_repo.list_feedback_llms(session)
     available_models = configured_llm_options()
@@ -310,7 +335,11 @@ def get_llm_options(session: DbSession):
     )
 
 
-@router.get("/resumes/{resume_id}", response_model=ResumeOut)
+@router.get(
+    "/resumes/{resume_id}",
+    response_model=ResumeOut,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def get_resume(session: DbSession, resume_id: str):
     resume = resumes_repo.get_by_resume_id(session, resume_id)
     if resume is None:
@@ -318,7 +347,11 @@ def get_resume(session: DbSession, resume_id: str):
     return resume
 
 
-@router.post("/resumes/{resume_id}/feedback/recompute", response_model=ResumeOut)
+@router.post(
+    "/resumes/{resume_id}/feedback/recompute",
+    response_model=ResumeOut,
+    dependencies=[Depends(llm_rate_limiter.check)],
+)
 def recompute_resume_feedback(
     session: DbSession, resume_id: str, body: RecomputeFeedbackIn
 ):
@@ -386,7 +419,11 @@ def recompute_resume_feedback(
     return refreshed
 
 
-@router.delete("/resumes/{resume_id}", response_model=DeleteResult)
+@router.delete(
+    "/resumes/{resume_id}",
+    response_model=DeleteResult,
+    dependencies=[Depends(read_rate_limiter.check)],
+)
 def delete_resume(session: DbSession, resume_id: str):
     deleted = resumes_repo.delete(session, resume_id)
     if not deleted:
