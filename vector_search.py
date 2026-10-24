@@ -169,45 +169,67 @@ def resume_to_case_dict(resume) -> dict:
     }
 
 
+BATCH_SIZE = 100
+
+
 def reindex_all() -> int:
     """Rebuilds the Qdrant collection from scratch using the current DB
     contents. Returns the number of resumes actually indexed (some may be
     skipped: too little text to embed meaningfully, or a non-numeric
-    resume_id that can't become a Qdrant point id)."""
+    resume_id that can't become a Qdrant point id).
+
+    Processes resumes in batches of BATCH_SIZE to avoid loading the entire
+    table into memory at once. Vectors are upserted to Qdrant per batch.
+    """
     model = get_embedding_model()
     ensure_collection(embedding_dimension(model), force_recreate=True)
 
-    with get_session() as session:
-        resumes = resumes_repo.list_all(session)
+    total_indexed = 0
+    skip = 0
 
-    points = []
-    for resume in resumes:
-        case = resume_to_case_dict(resume)
-        text = build_resume_text(case)
-        if len(text.strip()) < 100:
-            continue
-        try:
-            point_id = int(resume.resume_id)
-        except (TypeError, ValueError):
-            continue
+    while True:
+        with get_session() as session:
+            resumes, total = resumes_repo.list_paginated(
+                session, skip=skip, limit=BATCH_SIZE
+            )
 
-        vector = encode_weighted_resume(case, model, prefix="passage")
-        payload = {
-            "case_id": resume.resume_id,
-            "role": case["role_position"],
-            "skills": case["skills"],
-            "summary": case["about_me_summary"],
-            "experience": case["experience"],
-            # "feedback_summary": case["feedback_summary"],
-            # "feedback_sections": case["feedback_sections"],
-            # "llm": case["llm"],
-        }
-        points.append(PointStruct(id=point_id, vector=vector, payload=payload))
+        if not resumes:
+            break
 
-    if points:
-        client = get_qdrant_client()
-        client.upsert(collection_name=COLLECTION_NAME, points=points)
-    return len(points)
+        points = []
+        for resume in resumes:
+            case = resume_to_case_dict(resume)
+            text = build_resume_text(case)
+            if len(text.strip()) < 100:
+                continue
+            try:
+                point_id = int(resume.resume_id)
+            except (TypeError, ValueError):
+                continue
+
+            vector = encode_weighted_resume(case, model, prefix="passage")
+            payload = {
+                "case_id": resume.resume_id,
+                "role": case["role_position"],
+                "skills": case["skills"],
+                "summary": case["about_me_summary"],
+                "experience": case["experience"],
+                # "feedback_summary": case["feedback_summary"],
+                # "feedback_sections": case["feedback_sections"],
+                # "llm": case["llm"],
+            }
+            points.append(PointStruct(id=point_id, vector=vector, payload=payload))
+
+        if points:
+            client = get_qdrant_client()
+            client.upsert(collection_name=COLLECTION_NAME, points=points)
+            total_indexed += len(points)
+
+        skip += len(resumes)
+        if skip >= total:
+            break
+
+    return total_indexed
 
 
 def collection_exists() -> bool:
