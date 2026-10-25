@@ -304,8 +304,7 @@ def extract_pdf_text(file_url: str, data_dir: Path = DATA_DIR) -> str:
     pdf_path = data_dir / Path(file_url).name
     
     if not pdf_path.exists():
-        # Добавим лог, чтобы сразу видеть, если файл реально потерялся
-        print(f"[warning] PDF file not found: {pdf_path}")
+        logger.warning("PDF file not found: %s", pdf_path)
         return ""
         
     with fitz.open(pdf_path) as doc:
@@ -501,8 +500,11 @@ def _process_one_cv(pid: int, file_url: str, feedback_raw: str, data_dir: Path) 
             feedback_prompt_id = None
         t_feedback = time.perf_counter() - t1
 
-        print(
-            f"[timing] resume_id={pid} pdf+intro_llm={t_pdf_and_intro:.1f}s feedback_llm={t_feedback:.1f}s"
+        logger.info(
+            "[timing] resume_id=%s pdf+intro_llm=%.1fs feedback_llm=%.1fs",
+            pid,
+            t_pdf_and_intro,
+            t_feedback,
         )
 
         return {
@@ -594,7 +596,10 @@ def build_cases(
         todo[pid] = entry
 
     if skipped:
-        print(f"Skipping {skipped} already-processed CV(s) (same model/prompt/feedback)")
+        logger.info(
+            "Skipping %d already-processed CV(s) (same model/prompt/feedback)",
+            skipped,
+        )
     if not todo:
         return []
 
@@ -658,7 +663,10 @@ def _save_one_case(case: dict) -> bool:
     critique). Returns True if the case was saved.
     """
     if case.get("feedback_sections") is None:
-        print(f"Skipping resume_id={case['resume_id']!r}: no clear feedback (feedback_sections is null)")
+        logger.info(
+            "Skipping resume_id=%r: no clear feedback (feedback_sections is null)",
+            case["resume_id"],
+        )
         return False
     with get_session() as session:
         resumes_repo.upsert(session, case)
@@ -674,7 +682,11 @@ def save_cases_to_db(cases: list[dict]) -> int:
     becomes unavailable) doesn't lose CVs that were already processed.
     """
     saved = sum(_save_one_case(c) for c in cases)
-    print(f"Skipped {len(cases) - saved} case(s) with unclear/no feedback")
+    logger.info(
+        "Skipped %d case(s) with unclear/no feedback out of %d total",
+        len(cases) - saved,
+        len(cases),
+    )
     return saved
 
 
@@ -711,9 +723,11 @@ def upload_file_via_api(json_path: Path = INPUT_PATH, api_base_url: str = API_BA
     response.raise_for_status()
 
     result = response.json()
-    print(
-        f"API processed {result['received']} CV(s): saved {result['saved']}, "
-        f"skipped {len(result['skipped_ids'])} with unclear feedback"
+    logger.info(
+        "API processed %d CV(s): saved %d, skipped %d with unclear feedback",
+        result["received"],
+        result["saved"],
+        len(result["skipped_ids"]),
     )
     return result
 

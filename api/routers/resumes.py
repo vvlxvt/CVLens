@@ -1,6 +1,7 @@
 """Resume CRUD, upload pipeline, vector search and recompute endpoints."""
 
 import json
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -46,6 +47,8 @@ from response import (
     OLLAMA_MODEL,
     OPENROUTER_MODEL,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["resumes"])
 
@@ -295,7 +298,11 @@ def list_resumes(
         TimeoutError,
         UnexpectedResponse,
     ) as e:
-        print(f"[api] Could not read vector index status: {type(e).__name__}: {e}")
+        logger.warning(
+            "[api] Could not read vector index status: %s: %s",
+            type(e).__name__,
+            e,
+        )
         indexed_ids = set()
 
     items = [

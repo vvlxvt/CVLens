@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from ast import literal_eval
 
@@ -10,6 +11,8 @@ from openai import OpenAI
 from core.config import settings
 from db import prompts_repo
 from db.connection import get_session
+
+logger = logging.getLogger(__name__)
 
 groq_api_key = settings.groq_api_key
 openrouter_api_key = settings.open_router_key
@@ -203,14 +206,12 @@ def _call_groq_with_json_retry(
         if not json_mode or not _is_groq_json_validation_error(e):
             raise
 
-        print(
+        logger.warning(
             "[response] Groq JSON response_format validation failed; "
             "retrying without provider-enforced JSON mode."
         )
         content = _call_groq(prompt, False, system, model=model)
-        print("\n===== RAW GROQ RESPONSE =====")
-        print(content)
-        print("===== END RAW RESPONSE =====\n")
+        logger.debug("\n===== RAW GROQ RESPONSE =====\n%s\n===== END RAW RESPONSE =====\n", content)
 
         return _parse_json_content(content)
 
@@ -253,7 +254,7 @@ def get_active_free_openrouter_models() -> list[str]:
             if free_models:
                 return free_models
     except Exception as e:
-        print(f"[response] Failed to fetch dynamic free models: {e}")
+        logger.warning("[response] Failed to fetch dynamic free models: %s", e)
 
     return DEFAULT_FREE_MODELS
 
@@ -309,9 +310,11 @@ def _call_openrouter(
             parsed = _parse_json_content(content) if json_mode else content
             return parsed, current_model
         except Exception as e:
-            print(
-                f"[response] OpenRouter model '{current_model}' failed "
-                f"({type(e).__name__}: {e}). Trying fallback..."
+            logger.warning(
+                "[response] OpenRouter model '%s' failed (%s: %s). Trying fallback...",
+                current_model,
+                type(e).__name__,
+                e,
             )
             last_exception = e
 
@@ -376,9 +379,12 @@ def _fallback_to_ollama(
             f"{failed_provider} failed and Ollama fallback is disabled"
         ) from error
 
-    print(
-        f"[response] {failed_provider} failed ({type(error).__name__}: {error}); "
-        f"falling back to Ollama ({OLLAMA_MODEL})."
+    logger.warning(
+        "[response] %s failed (%s: %s); falling back to Ollama (%s).",
+        failed_provider,
+        type(error).__name__,
+        error,
+        OLLAMA_MODEL,
     )
     result = _call_ollama(prompt, json_mode, system)
     return result, OLLAMA_MODEL
@@ -394,9 +400,11 @@ def _fallback_to_groq_then_ollama(
 ):
     global _force_ollama
 
-    print(
-        f"[response] {failed_provider} failed ({type(error).__name__}: {error}); "
-        "trying the next configured LLM."
+    logger.warning(
+        "[response] %s failed (%s: %s); trying the next configured LLM.",
+        failed_provider,
+        type(error).__name__,
+        error,
     )
 
     if groq_api_key and not _force_ollama:
@@ -404,11 +412,11 @@ def _fallback_to_groq_then_ollama(
             result = _call_groq_with_json_retry(prompt, json_mode, system)
             return result, MODEL
         except (openai.OpenAIError, ValueError) as groq_error:
-            print(
-                f"[response] Groq/OpenAI-compatible call failed "
-                f"({type(groq_error).__name__}: {groq_error}); "
-                f"{'falling back to Ollama (' + OLLAMA_MODEL + ')' if allow_ollama else 'Ollama fallback is disabled'} "
-                "for the rest of this run."
+            logger.warning(
+                "[response] Groq/OpenAI-compatible call failed (%s: %s); %s for the rest of this run.",
+                type(groq_error).__name__,
+                groq_error,
+                "falling back to Ollama (%s)" % OLLAMA_MODEL if allow_ollama else "Ollama fallback is disabled",
             )
             if allow_ollama:
                 _force_ollama = True
@@ -468,8 +476,10 @@ def generate_response(
             result = _call_groq_with_json_retry(prompt, json_mode, system)
             return result, MODEL
         except (openai.OpenAIError, ValueError) as e:
-            print(
-                f"[response] Groq failed ({type(e).__name__}: {e}); trying OpenRouter..."
+            logger.warning(
+                "[response] Groq failed (%s: %s); trying OpenRouter...",
+                type(e).__name__,
+                e,
             )
 
     if get_openrouter_client():
@@ -477,9 +487,11 @@ def generate_response(
             result, used_model = _call_openrouter(prompt, json_mode, system)
             return result, used_model
         except (openai.OpenAIError, ValueError) as e:
-            print(
-                f"[response] OpenRouter failed ({type(e).__name__}: {e}); "
-                f"falling back to Ollama ({OLLAMA_MODEL})..."
+            logger.warning(
+                "[response] OpenRouter failed (%s: %s); falling back to Ollama (%s)...",
+                type(e).__name__,
+                e,
+                OLLAMA_MODEL,
             )
 
     if not allow_ollama:
