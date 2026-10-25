@@ -227,3 +227,7 @@ models/
 *.pdf
 resumes*
 .env_keys
+
+# Application logs
+cv_lens.log
+*.log

@@ -1,5 +1,8 @@
 """CVLens FastAPI application: web UI + REST API over the parsed-CV DB."""
 
+import logging
+import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +15,26 @@ from api.routers import pages, prompts, resumes, review_rules, reviews
 from core.config import settings
 from db.connection import engine
 from vector_search import close_qdrant_client
+
+# ---------------------------------------------------------------------------
+# Логирование: пишем в файл cv_lens.log в корне проекта и дублируем в консоль.
+# Уровень можно переопределить через переменную окружения LOG_LEVEL
+# (по умолчанию INFO).
+# ---------------------------------------------------------------------------
+_LOG_LEVEL = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+_LOG_FILE = Path(__file__).resolve().parent.parent / "cv_lens.log"
+
+logging.basicConfig(
+    level=_LOG_LEVEL,
+    format="%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(_LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+
+logger = logging.getLogger(__name__)
+logger.info("CVLens API starting up (log level=%s, log file=%s)", _LOG_LEVEL, _LOG_FILE)
 
 
 @asynccontextmanager
