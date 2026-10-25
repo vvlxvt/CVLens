@@ -22,9 +22,9 @@ Telegram export (result.json) + PDF files
         ▼
   extract/parser.py  ──►  SQLite DB (resumes.db)
         │
-        ├─► app.py  ──►  Qdrant collection (cv_reviews)
+        ├─► vector_search.py  ──►  Qdrant collection (cv_reviews)
         │                  │
-        │                  └─► search_similar_cv()  ──►  top-N similar CVs + feedback
+        │                  └─► search_similar()  ──►  top-N similar CVs + feedback
         │
         ├─► api/main.py  ──►  FastAPI REST API
         │                     │
@@ -76,51 +76,24 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Create a `.env` file in the project root:
+1. Copy `.env.example` to `.env` and fill in real values:
 
-```env
-# API security — Bearer token required on data routes (empty = auth off);
-# CORS_ORIGINS — comma-separated browser origins (empty = same-origin only)
-API_TOKEN=change-me
-CORS_ORIGINS=
+   ```bash
+   copy .env.example .env    # Windows
+   # cp .env.example .env    # macOS / Linux
+   ```
 
-# Upload limits (bytes / counts)
-MAX_RESULT_JSON_BYTES=52428800
-MAX_PDF_BYTES=20971520
-MAX_PDF_FILES_PER_UPLOAD=200
+2. `.env` is gitignored — never commit real keys.
 
-# Qdrant
-QDRANT_URL=https://your-cluster.qdrant.io
-QDRANT_API_KEY=your-api-key
-QDRANT_VERIFY_SSL=false
+3. Required variables:
+   - `API_TOKEN` — Bearer token required for all data routes (empty = auth disabled for local dev).
 
-# --- LLM provider: CV review / rules / search --------------------------------
-# LLM_PROVIDER selects the provider used by generate_response() when an explicit
-# model is NOT passed (i.e. CV review, review rules, search). The fallback chain
-# is Groq → OpenRouter → local Ollama.
-# ollama (default, local) | openai (Groq-compatible) | openrouter / official_openai
-LLM_PROVIDER=ollama
-OLLAMA_NUM_GPU=0
+4. Optional provider keys — only set the ones you need:
+   - `QDRANT_API_KEY`, `QDRANT_URL` — for vector search (Qdrant cloud or self-hosted)
+   - `GROQ_API_KEY` — for Groq LLM provider
+   - `OPEN_ROUTER_KEY` — for OpenRouter LLM provider
 
-# Groq — first choice for CV review when no explicit model is passed
-GROQ_API_KEY=your-groq-key
-GROQ_MODEL=qwen/qwen3.6-27b
-
-# OpenRouter — second choice for CV review / parsing fallback
-OPEN_ROUTER_KEY=your-openrouter-api-key
-OPENROUTER_MODEL=openrouter/auto
-
-# --- CV parsing provider (about / feedback extraction) -----------------------
-# Separate from LLM_PROVIDER so parsing can prefer free cloud models while the
-# rest of the app stays local. Set to "ollama" to keep everything local.
-# openrouter (free models first, default) | ollama | openai (Groq)
-PARSING_PROVIDER=openrouter
-# Concrete free model for parsing; ignored when PARSING_PROVIDER=ollama
-PARSING_MODEL=openrouter/auto
-
-# Database (SQLite - default, no additional config needed)
-# Database file: resumes.db (created automatically)
-```
+See `.env.example` for the full list of variables with placeholder values and comments.
 
 ## Usage
 
@@ -155,37 +128,59 @@ Open `web/index.html` in a browser to access the web interface for:
 
 ### 5. Index and search in Qdrant
 
+Reindex all resumes from SQLite to Qdrant via the API:
+
 ```bash
-# Reindex all resumes from SQLite to Qdrant
-python app.py --reindex
-
-# Search for similar CVs using a PDF
-python app.py --pdf path/to/cv.pdf --limit 5
-
-# Search with skills filter
-python app.py --pdf path/to/cv.pdf --skills "python,django" --limit 10
+curl -X POST http://localhost:8000/resumes/reindex \
+  -H "Authorization: Bearer $API_TOKEN"
 ```
 
-To search programmatically, reuse the helpers in `app.py`:
+Search for similar CVs via the API (upload a PDF):
+
+```bash
+curl -X POST http://localhost:8000/resumes/search \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -F "file=@path/to/cv.pdf" \
+  -F "limit=5"
+```
+
+Search with skills filter:
+
+```bash
+curl -X POST http://localhost:8000/resumes/search \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -F "file=@path/to/cv.pdf" \
+  -F "skills=python,django" \
+  -F "limit=10"
+```
+
+Or use the Python helpers directly from `vector_search.py`:
 
 ```python
-from app import client, load_embedding_model, load_cv_from_pdf, build_resume_text, search_similar_cv
+from vector_search import get_embedding_model, get_qdrant_client, search_similar, encode_weighted_resume
+from extract.parser import parse_cv_sections
+from pathlib import Path
 
-model = load_embedding_model()
-case = load_cv_from_pdf("path/to/cv.pdf")
-resume_text = build_resume_text(case)
+model = get_embedding_model()
+client = get_qdrant_client()
 
-results = search_similar_cv(
-    client,
+sections = parse_cv_sections("path/to/cv.pdf", data_dir=Path("."))
+case = {
+    "role_position": sections.get("role_position") or "",
+    "skills": sections.get("skills") or "",
+    "about_me_summary": sections.get("about_summary") or sections.get("about_me_summary_raw") or "",
+    "experience": sections.get("experience") or "",
+}
+
+vector = encode_weighted_resume(case, model, prefix="query")
+results = client.query_points(
     collection_name="cv_reviews",
-    embedding_model=model,
-    case=case,
+    query=vector,
     limit=5,
-    skills_filter=["python", "django"],
-)
+).points
 
 for hit in results:
-    print(hit.score, hit.payload["role"], hit.payload["feedback_summary"])
+    print(hit.score, hit.payload.get("role"), hit.payload.get("summary"))
 ```
 
 ### 6. Test PDF text cleaning
@@ -197,6 +192,17 @@ python tests/test_clean_cv_text.py
 ```
 
 Edit `file_url` in that script to point at a different PDF.
+
+### 7. Run tests
+
+The project includes a pytest test suite covering critical parsing, JSON recovery,
+Telegram feedback grouping, and database repository operations:
+
+```bash
+pytest tests/
+```
+
+All 58 tests must pass. New features should include tests.
 
 ### 7. RAG chat (separate workflow)
 
@@ -234,9 +240,13 @@ CVLens/
 │   ├── prompts.html       # Prompt management interface
 │   ├── css/               # Stylesheets
 │   └── js/                # JavaScript modules
-├── tests/                 # Sample CV PDFs and cleaning script
+├── tests/                 # Unit tests (pytest) + sample CV PDFs
 ├── alembic/               # Database migration files
 ├── alembic.ini            # Alembic configuration
+├── core/
+│   ├── config.py          # Application settings (pydantic-settings)
+│   └── rate_limit.py      # Token-bucket rate limiter for API endpoints
+├── .env.example           # Configuration template (copy to .env)
 ├── requirements.txt
 └── README.md
 ```
@@ -260,10 +270,15 @@ Field-weighted embeddings are used to prioritize important fields:
 
 ### Resumes
 
-- `POST /resumes/upload` — Upload Telegram export and PDF files
-- `GET /resumes` — List resumes with pagination and filters
-- `GET /resumes/{resume_id}` — Get full resume details
-- `DELETE /resumes/{resume_id}` — Delete a resume
+- `POST /resumes/upload` — Upload Telegram export and PDF files (rate-limited: 10/min)
+- `POST /resumes/search` — Search similar CVs via vector similarity (rate-limited: 10/min)
+- `POST /resumes/reindex` — Reindex all resumes from SQLite to Qdrant (rate-limited: 10/min)
+- `GET /resumes` — List resumes with pagination and filters (rate-limited: 60/min)
+- `GET /resumes/{resume_id}` — Get full resume details (rate-limited: 60/min)
+- `POST /resumes/{resume_id}/feedback/recompute` — Recompute feedback with a model (rate-limited: 10/min)
+- `DELETE /resumes/{resume_id}` — Delete a resume (rate-limited: 60/min)
+- `GET /resumes/llms` — List distinct LLM models used (rate-limited: 60/min)
+- `GET /resumes/llm-options` — Get LLM configuration options (rate-limited: 60/min)
 
 ### Prompts
 
@@ -280,6 +295,22 @@ Prompt names: `intro_extraction`, `feedback_extraction`
 - The database uses SQLite with Alembic for migrations. Run `alembic upgrade head` after installation.
 - `main.py` is a generic RAG CLI over text files in `knowledge/` and uses a separate embedding model (`intfloat/multilingual-e5-small`) and collection (`cv_reviews`) for a different purpose than CV similarity search.
 - The web UI is a static HTML/JS interface that communicates with the FastAPI backend.
+
+### Reliability & security notes
+
+- **Rate limiting:** LLM-heavy endpoints (`/resumes/upload`, `/resumes/search`, `/resumes/reindex`,
+  `/resumes/recompute`, `/resumes/review`, `/review-rules/rebuild`) are rate-limited to
+  10 requests/minute per client IP or API token. Read endpoints allow 60 requests/minute.
+  HTTP 429 with `Retry-After` header is returned when the limit is exceeded.
+- **Graceful shutdown:** The FastAPI app uses a `lifespan` handler that disposes the
+  SQLAlchemy engine and closes the Qdrant client on shutdown.
+- **Lazy initialization:** External clients (Qdrant, Groq, OpenRouter) are created on
+  first use, not at import time. The modules can be imported without network access.
+- **PDF validation:** Uploaded files with `.pdf` extension are validated for the `%PDF-`
+  magic bytes; non-PDF files are skipped during upload.
+- **Logging:** The application uses Python's `logging` module instead of `print()`.
+  Configure log levels as needed for your deployment.
+- **Secrets:** `.env` and `.env_keys` are gitignored. Use `.env.example` as a template.
 
 ## License
 
